@@ -130,12 +130,19 @@ function buildChart(data) {
     .attr('class', 'axis-label')
     .attr('text-anchor', 'middle')
     .attr('x', w / 2)
-    .attr('y', h + 48);
+    .attr('y', h + 48)
+    .style('font-size', '14px') 
+    .text('AÑO');
 
   g.append('text')
     .attr('class', 'axis-label')
     .attr('text-anchor', 'middle')
     .attr('transform', `translate(-52, ${h / 2}) rotate(-90)`)
+    .style('font-size', '16px') 
+    .text('Satélites en órbita');
+
+
+
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
