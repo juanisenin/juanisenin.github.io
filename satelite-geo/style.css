@@ -1,0 +1,67 @@
+* {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+body {
+  background: #f5f6fa;
+}
+
+#map {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+}
+
+#map svg {
+  display: block;
+}
+
+h1 {
+  position: fixed;
+  bottom: 32px;
+  left: 24px;
+  z-index: 1000;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #3a3f5c;
+}
+
+.legend {
+  position: fixed;
+  bottom: 32px;
+  right: 24px;
+  z-index: 999;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 8px;
+  padding: 14px 18px;
+  font-size: 11px;
+  color: #5a6080;
+  line-height: 2;
+  box-shadow: 0 2px 12px rgba(0,0,0,.08);
+}
+
+.legend-title {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #3a3f5c;
+  margin-bottom: 6px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
