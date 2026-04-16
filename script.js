@@ -85,8 +85,8 @@ function buildChart(data) {
   const aLabelX = sx + 10;
   const aLabelY = sy - 32;
   g.append('line')
-    .attr('x1', sx).attr('x2', aLabelX)
-    .attr('y1', sy).attr('y2', aLabelY + 16)
+    .attr('x1', sx).attr('x2', aLabelX + 10)
+    .attr('y1', sy).attr('y2', aLabelY + 30)
     .attr('stroke', '#e05c2a')
     .attr('stroke-width', 1);
 
@@ -100,33 +100,42 @@ function buildChart(data) {
 
   // Texto
   g.append('text')
-    .attr('x', aLabelX + 4).attr('y', aLabelY + 8)
+    .attr('x', aLabelX + 14).attr('y', aLabelY + 28)
     .attr('font-size', 11)
     .attr('font-family', 'Segoe UI, system-ui, sans-serif')
     .attr('fill', '#e05c2a')
     .attr('font-weight', '500')
-    .text('Inicio de lanzamientos');
+    .text('Inicio de');
   g.append('text')
-    .attr('x', aLabelX + 4).attr('y', aLabelY + 22)
+    .attr('x', aLabelX + 14).attr('y', aLabelY + 42)
     .attr('font-size', 11)
     .attr('font-family', 'Segoe UI, system-ui, sans-serif')
     .attr('fill', '#e05c2a')
     .attr('font-weight', '500')
-    .text('masivos de Starlink (2019)');
+    .text('lanzamientos')
+
+    g.append('text')
+    .attr('x', aLabelX + 14).attr('y', aLabelY + 56)
+    .attr('font-size', 11)
+    .attr('font-family', 'Segoe UI, system-ui, sans-serif')
+    .attr('fill', '#e05c2a')
+    .attr('font-weight', '500')
+    .text('Starlink')
+
+  
+    ;
 
   // Axis labels
   g.append('text')
     .attr('class', 'axis-label')
     .attr('text-anchor', 'middle')
     .attr('x', w / 2)
-    .attr('y', h + 48)
-    .text('Año');
+    .attr('y', h + 48);
 
   g.append('text')
     .attr('class', 'axis-label')
     .attr('text-anchor', 'middle')
     .attr('transform', `translate(-52, ${h / 2}) rotate(-90)`)
-    .text('Satélites en órbita');
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
