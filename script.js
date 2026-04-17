@@ -139,7 +139,7 @@ function buildChart(data) {
     .attr('text-anchor', 'middle')
     .attr('transform', `translate(-52, ${h / 2}) rotate(-90)`)
     .style('font-size', '16px') 
-    .text('Satélites en órbita');
+
 
 
 
