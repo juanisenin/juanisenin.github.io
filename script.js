@@ -193,8 +193,7 @@ function buildChart(data) {
     .attr('fill', 'none')
     .attr('pointer-events', 'all')
     .on('mousemove', function(event) {
-      if (audioCtx.state === 'suspended') audioCtx.resume().then(startAmbient);
-      else startAmbient();
+      initAudio();
       const [mx] = d3.pointer(event);
       const year = Math.round(x.invert(mx));
       const i = bisect(data, year);
@@ -413,33 +412,49 @@ const MAX_TOTAL    = 13890;
 const MIN_INTERVAL = 80;
 const MAX_INTERVAL = 2200;
 
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-let satBuffer     = null;
-let repeatTimer   = null;
-let activeSource  = null;
-let activeGain    = null;
-let lastYear      = null;
+// Pre-fetch como ArrayBuffer (no requiere AudioContext ni interacción del usuario)
+const _prefetch = url => fetch(url).then(r => r.arrayBuffer()).catch(() => null);
+const _satFetch  = _prefetch('Sonido_Satelite.mp3');
+const _ambFetch  = _prefetch('Sonido_Ambiente.mp3');
+const _statFetch = _prefetch('Estatica.mp3');
 
-// Ambient crossfade
+let audioCtx       = null;
+let satBuffer      = null;
 let ambientBuffer  = null;
 let staticBuffer   = null;
 let ambientGain    = null;
 let staticGain     = null;
 let ambientStarted = false;
+let repeatTimer    = null;
+let activeSource   = null;
+let activeGain     = null;
+let lastYear       = null;
+let _audioIniting  = false;
 
-Promise.all([
-  fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
-  fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
-  fetch('Estatica.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
-]).then(([sat, amb, stat]) => {
-  satBuffer     = sat;
-  ambientBuffer = amb;
-  staticBuffer  = stat;
-  startAmbient();
-}).catch(() => {});
+// Crea el AudioContext y decodifica en el primer gesto del usuario
+async function initAudio() {
+  if (audioCtx || _audioIniting) return;
+  _audioIniting = true;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    const [sa, aa, sta] = await Promise.all([_satFetch, _ambFetch, _statFetch]);
+    if (!sa || !aa || !sta) return;
+    [satBuffer, ambientBuffer, staticBuffer] = await Promise.all([
+      audioCtx.decodeAudioData(sa),
+      audioCtx.decodeAudioData(aa),
+      audioCtx.decodeAudioData(sta),
+    ]);
+    startAmbient();
+  } catch (e) {
+    console.error('Audio init error:', e);
+  } finally {
+    _audioIniting = false;
+  }
+}
 
 function startAmbient() {
-  if (ambientStarted || !ambientBuffer || !staticBuffer || audioCtx.state !== 'running') return;
+  if (ambientStarted || !ambientBuffer || !staticBuffer) return;
   ambientStarted = true;
 
   ambientGain = audioCtx.createGain();
@@ -464,7 +479,7 @@ function startAmbient() {
 }
 
 function updateAmbientMix(total) {
-  if (!ambientGain || !staticGain) return;
+  if (!ambientGain || !staticGain || !audioCtx) return;
   const t   = total / MAX_TOTAL;
   const now = audioCtx.currentTime;
   ambientGain.gain.linearRampToValueAtTime(0.75 * (1 - t), now + 0.5);
@@ -472,9 +487,8 @@ function updateAmbientMix(total) {
 }
 
 function playOnce(interval) {
-  if (!satBuffer) return;
+  if (!satBuffer || !audioCtx) return;
 
-  // Silencia el anterior suavemente — se desvanece y termina solo sin stop() abrupto
   if (activeGain) {
     activeGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
   }
@@ -508,7 +522,7 @@ function playSounds(total) {
 function stopSounds() {
   clearTimeout(repeatTimer);
   repeatTimer = null;
-  if (activeGain) {
+  if (activeGain && audioCtx) {
     activeGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
   }
   activeSource = null;
