@@ -187,14 +187,27 @@ function buildChart(data) {
     .attr('r', 5)
     .style('opacity', 0);
 
+  const hint = g.append('text')
+    .attr('x', w / 2)
+    .attr('y', h / 2)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', 12)
+    .attr('font-family', 'Segoe UI, system-ui, sans-serif')
+    .attr('fill', '#9099b8')
+    .attr('pointer-events', 'none')
+    .text('▶ Haz click para activar el audio');
+
   g.append('rect')
     .attr('width', w)
     .attr('height', h)
     .attr('fill', 'none')
     .attr('pointer-events', 'all')
+    .style('cursor', 'pointer')
+    .on('click', function() {
+      initAudio();
+      hint.style('opacity', 0);
+    })
     .on('mousemove', function(event) {
-      if (audioCtx.state === 'suspended') audioCtx.resume().then(startAmbient);
-      else startAmbient();
       const [mx] = d3.pointer(event);
       const year = Math.round(x.invert(mx));
       const i = bisect(data, year);
@@ -413,9 +426,14 @@ const MAX_TOTAL    = 13890;
 const MIN_INTERVAL = 80;
 const MAX_INTERVAL = 2200;
 
-// AudioContext creado eagerly — decodificar no requiere interacción, solo reproducir
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// Pre-fetch como ArrayBuffer: no requiere AudioContext ni gesto del usuario
+const _audioArrays = Promise.all([
+  fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()),
+  fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()),
+  fetch('Estatica.mp3').then(r => r.arrayBuffer()),
+]).catch(e => { console.error('Audio fetch error:', e); return null; });
 
+let audioCtx       = null;
 let satBuffer      = null;
 let ambientBuffer  = null;
 let staticBuffer   = null;
@@ -426,19 +444,33 @@ let repeatTimer    = null;
 let activeSource   = null;
 let activeGain     = null;
 let lastYear       = null;
+let _initPromise   = null;
 
-Promise.all([
-  fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
-  fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
-  fetch('Estatica.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
-]).then(([sat, amb, stat]) => {
-  satBuffer     = sat;
-  ambientBuffer = amb;
-  staticBuffer  = stat;
-}).catch(e => console.error('Audio load error:', e));
+// Llamar en el primer gesto del usuario — crea el contexto y decodifica
+function initAudio() {
+  if (_initPromise) return _initPromise;
+  _initPromise = (async () => {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      const arrays = await _audioArrays;
+      if (!arrays) return;
+      const [sa, aa, sta] = arrays;
+      [satBuffer, ambientBuffer, staticBuffer] = await Promise.all([
+        audioCtx.decodeAudioData(sa),
+        audioCtx.decodeAudioData(aa),
+        audioCtx.decodeAudioData(sta),
+      ]);
+      startAmbient();
+    } catch (e) {
+      console.error('Audio init error:', e);
+    }
+  })();
+  return _initPromise;
+}
 
 function startAmbient() {
-  if (ambientStarted || !ambientBuffer || !staticBuffer || audioCtx.state !== 'running') return;
+  if (ambientStarted || !ambientBuffer || !staticBuffer) return;
   ambientStarted = true;
 
   ambientGain = audioCtx.createGain();
