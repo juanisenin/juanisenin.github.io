@@ -426,13 +426,6 @@ const MAX_TOTAL    = 13890;
 const MIN_INTERVAL = 80;
 const MAX_INTERVAL = 2200;
 
-// Pre-fetch como ArrayBuffer: no requiere AudioContext ni gesto del usuario
-const _audioArrays = Promise.all([
-  fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()),
-  fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()),
-  fetch('Estatica.mp3').then(r => r.arrayBuffer()),
-]).catch(e => { console.error('Audio fetch error:', e); return null; });
-
 let audioCtx       = null;
 let satBuffer      = null;
 let ambientBuffer  = null;
@@ -444,18 +437,19 @@ let repeatTimer    = null;
 let activeSource   = null;
 let activeGain     = null;
 let lastYear       = null;
-let _initPromise   = null;
+let _audioStarted  = false;
 
-// Llamar en el primer gesto del usuario — crea el contexto y decodifica
 function initAudio() {
-  if (_initPromise) return _initPromise;
-  _initPromise = (async () => {
+  if (_audioStarted) return;
+  _audioStarted = true;
+  (async () => {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') await audioCtx.resume();
-      const arrays = await _audioArrays;
-      if (!arrays) return;
-      const [sa, aa, sta] = arrays;
+      const [sa, aa, sta] = await Promise.all([
+        fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()),
+        fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()),
+        fetch('Estatica.mp3').then(r => r.arrayBuffer()),
+      ]);
       [satBuffer, ambientBuffer, staticBuffer] = await Promise.all([
         audioCtx.decodeAudioData(sa),
         audioCtx.decodeAudioData(aa),
@@ -464,9 +458,9 @@ function initAudio() {
       startAmbient();
     } catch (e) {
       console.error('Audio init error:', e);
+      _audioStarted = false;
     }
   })();
-  return _initPromise;
 }
 
 function startAmbient() {
