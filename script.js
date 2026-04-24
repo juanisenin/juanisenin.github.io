@@ -430,7 +430,7 @@ let ambientStarted = false;
 Promise.all([
   fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
   fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
-  fetch('estatica.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
+  fetch('Estatica.mp3').then(r => r.arrayBuffer()).then(b => audioCtx.decodeAudioData(b)),
 ]).then(([sat, amb, stat]) => {
   satBuffer     = sat;
   ambientBuffer = amb;
