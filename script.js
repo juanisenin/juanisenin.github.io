@@ -1,10 +1,37 @@
+// ── Estado de filtros ─────────────────────────────────────────────────────────
+const LEGEND_TYPES = [
+  { key: 'gov',        label: 'Gubernamentales / científicos', color: '#2171b5', shape: 'circle'   },
+  { key: 'gnss',       label: 'GNSS / Navegación',             color: '#2aaa58', shape: 'diamond'  },
+  { key: 'commercial', label: 'Constelaciones comerciales',    color: '#9b59b6', shape: 'triangle' },
+  { key: 'starlink',   label: 'Starlink',                      color: '#e05c2a', shape: 'cross'    },
+];
+
+const activeTypes    = new Set(['gov', 'gnss', 'commercial', 'starlink']);
+let _currentYearData = null;
+let _updateAreas     = null;
+
+function getEarthData(d) {
+  return {
+    gov:        activeTypes.has('gov')        ? d.gov        : 0,
+    gnss:       activeTypes.has('gnss')       ? d.gnss       : 0,
+    commercial: activeTypes.has('commercial') ? d.commercial : 0,
+    starlink:   activeTypes.has('starlink')   ? d.starlink   : 0,
+  };
+}
+
+function getFilteredTotal(d) {
+  if (!d) return 0;
+  const f = getEarthData(d);
+  return f.gov + f.gnss + f.commercial + f.starlink;
+}
+
 // ── Dimensions ────────────────────────────────────────────────────────────────
-const margin = { top: 16, right: 32, bottom: 64, left: 72 };
+const margin = { top: 16, right: 32, bottom: 64, left: 88 };
 
 function getSize() {
   const el = document.getElementById('chart');
   const W  = el.clientWidth;
-  const H  = Math.round(W * 0.48);
+  const H  = Math.round(W * 0.62);
   return {
     W, H,
     w: W - margin.left - margin.right,
@@ -37,26 +64,100 @@ function buildChart(data) {
     .attr('class', 'grid')
     .call(d3.axisLeft(y).ticks(6).tickSize(-w).tickFormat(''));
 
-  // Line
-  const line = d3.line()
-    .x(d => x(d.year))
-    .y(d => y(d.total))
-    .curve(d3.curveCatmullRom);
+  // Áreas apiladas con degradado: gov → gnss → commercial → starlink
+  const clipRect = g.append('clipPath')
+    .attr('id', 'area-clip')
+    .append('rect')
+    .attr('x', 0).attr('y', 0)
+    .attr('height', h).attr('width', 0);
 
-  const path = g.append('path')
+  clipRect.transition()
+    .duration(2400)
+    .ease(d3.easeCubicInOut)
+    .attr('width', w);
+
+  const curve = d3.curveCatmullRom;
+  const ORDER = ['gov', 'gnss', 'commercial', 'starlink'];
+
+  // Degradados
+  const defs = svg.append('defs');
+  const gradSpecs = [
+    { id: 'grad-gov',  color: '#2171b5', topOp: 0.55, botOp: 0.06 },
+    { id: 'grad-gnss', color: '#2aaa58', topOp: 0.60, botOp: 0.07 },
+    { id: 'grad-comm', color: '#9b59b6', topOp: 0.60, botOp: 0.07 },
+    { id: 'grad-sl',   color: '#e05c2a', topOp: 0.65, botOp: 0.07 },
+  ];
+  gradSpecs.forEach(({ id, color, topOp, botOp }) => {
+    const grad = defs.append('linearGradient').attr('id', id)
+      .attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 1)
+      .attr('gradientUnits', 'objectBoundingBox');
+    grad.append('stop').attr('offset',   '0%').attr('stop-color', color).attr('stop-opacity', topOp);
+    grad.append('stop').attr('offset', '100%').attr('stop-color', color).attr('stop-opacity', botOp);
+  });
+
+  // Función que calcula los límites del área según filtros activos
+  function makeAreaFn(type) {
+    return d3.area().x(d => x(d.year))
+      .y0(d => {
+        let cum = 0;
+        for (const t of ORDER) { if (t === type) break; if (activeTypes.has(t)) cum += d[t]; }
+        return y(cum);
+      })
+      .y1(d => {
+        let cum = 0;
+        for (const t of ORDER) { if (t === type) break; if (activeTypes.has(t)) cum += d[t]; }
+        if (activeTypes.has(type)) cum += d[type];
+        return y(cum);
+      })
+      .curve(curve);
+  }
+
+  const gradIds = { gov: 'grad-gov', gnss: 'grad-gnss', commercial: 'grad-comm', starlink: 'grad-sl' };
+  const areaPaths = {};
+  ORDER.forEach(type => {
+    areaPaths[type] = g.append('path')
+      .datum(data)
+      .attr('d', makeAreaFn(type)(data))
+      .attr('fill', `url(#${gradIds[type]})`)
+      .attr('clip-path', 'url(#area-clip)');
+  });
+
+  // Line
+  function makeLineFn() {
+    return d3.line()
+      .x(d => x(d.year))
+      .y(d => { let t = 0; ORDER.forEach(k => { if (activeTypes.has(k)) t += d[k]; }); return y(t); })
+      .curve(d3.curveCatmullRom);
+  }
+
+  const linePath = g.append('path')
     .datum(data)
     .attr('class', 'line')
-    .attr('d', line);
+    .attr('d', makeLineFn());
 
-  // Animate line drawing
-  const len = path.node().getTotalLength();
-  path
+  // Animate line drawing — limpiar dasharray al terminar para que las actualizaciones no se vean recortadas
+  const len = linePath.node().getTotalLength();
+  linePath
     .attr('stroke-dasharray', `${len} ${len}`)
     .attr('stroke-dashoffset', len)
     .transition()
     .duration(2400)
     .ease(d3.easeCubicInOut)
-    .attr('stroke-dashoffset', 0);
+    .attr('stroke-dashoffset', 0)
+    .on('end', () => linePath.attr('stroke-dasharray', null).attr('stroke-dashoffset', null));
+
+  // Función de actualización al cambiar filtros
+  _updateAreas = () => {
+    ORDER.forEach(type => {
+      areaPaths[type]
+        .attr('display', activeTypes.has(type) ? null : 'none')
+        .transition().duration(350).ease(d3.easeCubicInOut)
+        .attr('d', makeAreaFn(type)(data));
+    });
+    linePath
+      .transition().duration(350).ease(d3.easeCubicInOut)
+      .attr('d', makeLineFn()(data));
+  };
 
   // Axes
   g.append('g')
@@ -68,106 +169,21 @@ function buildChart(data) {
     .attr('class', 'axis')
     .call(d3.axisLeft(y).ticks(6).tickFormat(d => d >= 1000 ? d / 1000 + 'k' : d));
 
-  // ── Anotación Starlink ───────────────────────────────────────────────────
-  const starlink = data.find(d => d.year === 2019);
-  const sx = x(starlink.year);
-  const sy = y(starlink.total);
-
-  // Línea vertical punteada
-  g.append('line')
-    .attr('x1', sx).attr('x2', sx)
-    .attr('y1', sy).attr('y2', h)
-    .attr('stroke', '#e05c2a')
-    .attr('stroke-width', 1.2)
-    .attr('stroke-dasharray', '4 3');
-
-  // Línea de anotación hacia el texto
-  const aLabelX = sx + 10;
-  const aLabelY = sy - 32;
-  g.append('line')
-    .attr('x1', sx).attr('x2', aLabelX + 10)
-    .attr('y1', sy).attr('y2', aLabelY + 30)
-    .attr('stroke', '#e05c2a')
-    .attr('stroke-width', 1);
-
-  // Punto en la curva
-  g.append('circle')
-    .attr('cx', sx).attr('cy', sy)
-    .attr('r', 4)
-    .attr('fill', '#e05c2a')
-    .attr('stroke', '#f5f6fa')
-    .attr('stroke-width', 1.5);
-
-  // Texto
-  ['Inicio de', 'lanzamientos', 'Starlink'].forEach((line, i) => {
-    g.append('text')
-      .attr('x', aLabelX + 14)
-      .attr('y', aLabelY + 28 + i * 14)
-      .attr('font-size', 11)
-      .attr('font-family', 'Segoe UI, system-ui, sans-serif')
-      .attr('fill', '#e05c2a')
-      .attr('font-weight', '500')
-      .text(line);
-  });
-
-  // ── Anotación Sputnik ───────────────────────────────────────────────────────
-  const sputnik  = data.find(d => d.year === 1958);
-  const spx = x(sputnik.year);
-  const spy = y(sputnik.total);
-  const spColor = '#2aaa58';
-
-  const spLabelX = spx + 14;
-  const spLabelY = spy - 58;
-
-  // Línea vertical punteada
-  g.append('line')
-    .attr('x1', spx).attr('x2', spx)
-    .attr('y1', spy).attr('y2', h)
-    .attr('stroke', spColor)
-    .attr('stroke-width', 1.2)
-    .attr('stroke-dasharray', '4 3');
-
-  // Línea de anotación hacia el texto
-  g.append('line')
-    .attr('x1', spx).attr('x2', spLabelX + 8)
-    .attr('y1', spy).attr('y2', spLabelY + 44)
-    .attr('stroke', spColor)
-    .attr('stroke-width', 1);
-
-  // Punto en la curva
-  g.append('circle')
-    .attr('cx', spx).attr('cy', spy)
-    .attr('r', 4)
-    .attr('fill', spColor)
-    .attr('stroke', '#f5f6fa')
-    .attr('stroke-width', 1.5);
-
-  // Texto
-  ['Sputnik 1,', 'primer satélite', 'en órbita'].forEach((line, i) => {
-    g.append('text')
-      .attr('x', spLabelX + 12)
-      .attr('y', spLabelY + i * 14)
-      .attr('font-size', 11)
-      .attr('font-family', 'Segoe UI, system-ui, sans-serif')
-      .attr('fill', spColor)
-      .attr('font-weight', '500')
-      .text(line);
-  });
-
   // Axis labels
   g.append('text')
     .attr('class', 'axis-label')
     .attr('text-anchor', 'middle')
     .attr('x', w / 2)
-    .attr('y', h + 48)
-    .style('font-size', '14px')
+    .attr('y', h + 50)
+    .style('font-size', '13px')
     .text('AÑO');
 
   g.append('text')
     .attr('class', 'axis-label')
     .attr('text-anchor', 'middle')
-    .attr('transform', `translate(-52, ${h / 2}) rotate(-90)`)
-    .style('font-size', '16px');
+    .attr('transform', `translate(-66, ${h / 2}) rotate(-90)`)
+    .style('font-size', '13px')
+    .text('SATÉLITES EN ÓRBITA');
 
   // ── Interactividad: crosshair + tooltip ──────────────────────────────────────
   const bisect = d3.bisector(d => d.year).center;
@@ -187,26 +203,11 @@ function buildChart(data) {
     .attr('r', 5)
     .style('opacity', 0);
 
-  const hint = g.append('text')
-    .attr('x', w / 2)
-    .attr('y', h / 2)
-    .attr('text-anchor', 'middle')
-    .attr('font-size', 12)
-    .attr('font-family', 'Segoe UI, system-ui, sans-serif')
-    .attr('fill', '#9099b8')
-    .attr('pointer-events', 'none')
-    .text('▶ Haz click para activar el audio');
-
   g.append('rect')
     .attr('width', w)
     .attr('height', h)
     .attr('fill', 'none')
     .attr('pointer-events', 'all')
-    .style('cursor', 'pointer')
-    .on('click', function() {
-      initAudio();
-      hint.style('opacity', 0);
-    })
     .on('mousemove', function(event) {
       const [mx] = d3.pointer(event);
       const year = Math.round(x.invert(mx));
@@ -214,20 +215,31 @@ function buildChart(data) {
       const d = data[i];
       if (!d) return;
 
-      const px = x(d.year);
-      const py = y(d.total);
-
-      const dotColor = d.year === 1958  ? '#2aaa58'
-                     : d.starlink > 0   ? '#e05c2a'
-                     : '#2171b5';
+      const px          = x(d.year);
+      const filteredNow = getEarthData(d);
+      const filtNow     = filteredNow.gov + filteredNow.gnss + filteredNow.commercial + filteredNow.starlink;
+      const py          = y(filtNow);
 
       vline.attr('x1', px).attr('x2', px).style('opacity', 1);
-      snapDot.attr('cx', px).attr('cy', py).style('opacity', 1).style('fill', dotColor);
+      snapDot.attr('cx', px).attr('cy', py).style('opacity', 1);
 
-      const ttNew = d.year === 1958
+      const filtered   = getEarthData(d);
+      const filtTotal  = filtered.gov + filtered.gnss + filtered.commercial + filtered.starlink;
+      const ttVal      = `${filtTotal.toLocaleString()} satélite${filtTotal === 1 ? '' : 's'}`;
+
+      const BREAKDOWN = [
+        { key: 'gov',        icon: '●', label: 'Gubernamentales', color: '#2171b5' },
+        { key: 'gnss',       icon: '◆', label: 'GNSS',            color: '#2aaa58' },
+        { key: 'commercial', icon: '▲', label: 'Comerciales',     color: '#9b59b6' },
+        { key: 'starlink',   icon: '✕', label: 'Starlink',        color: '#e05c2a' },
+      ];
+
+      const ttNew = d.year === 1958 && activeTypes.has('gov')
         ? `<span class="tt-new" style="color:#2aaa58;font-weight:600">Sputnik 1</span>`
-        : `<span class="tt-new">+${d.new.toLocaleString()} nuevos</span>`;
-      const ttVal = `${d.total.toLocaleString()} satélite${d.total === 1 ? '' : 's'}`;
+        : BREAKDOWN
+            .filter(t => activeTypes.has(t.key) && filtered[t.key] > 0)
+            .map(t => `<span class="tt-new"><span style="color:${t.color}">${t.icon}</span> ${t.label}: ${filtered[t.key].toLocaleString()}</span>`)
+            .join('<br>');
 
       tooltip
         .style('opacity', 1)
@@ -237,10 +249,11 @@ function buildChart(data) {
 
       if (d.year !== lastYear) {
         lastYear = d.year;
-        playSounds(d.total);
-        updateEarthDots(d.total, d.starlink);
-        updateAmbientMix(d.total);
+        playSounds(d);
       }
+      updateAmbientMix(filtNow);
+      _currentYearData = d;
+      updateEarthDots(getEarthData(d));
     })
     .on('mouseleave', function() {
       vline.style('opacity', 0);
@@ -252,9 +265,19 @@ function buildChart(data) {
 }
 
 // ── Earth ─────────────────────────────────────────────────────────────────────
-const EARTH_R    = 86;
-const EARTH_SIZE = 300;
-const MAX_DOTS   = 13890;
+const EARTH_R    = 108;
+const EARTH_SIZE = 380;
+
+// Cada categoría ocupa un rango FIJO en el pool — las posiciones nunca cambian
+const MAX_GOV  = 5584;
+const MAX_GNSS = 321;
+const MAX_COMM = 1215;
+const MAX_SL   = 6770;
+const MAX_DOTS = MAX_GOV + MAX_GNSS + MAX_COMM + MAX_SL; // 13890
+
+const GNSS_OFF = MAX_GOV;
+const COMM_OFF = MAX_GOV + MAX_GNSS;
+const SL_OFF   = MAX_GOV + MAX_GNSS + MAX_COMM;
 
 const VIEW_RX = -0.38;
 const VIEW_RY =  0.22;
@@ -262,8 +285,11 @@ const VIEW_RY =  0.22;
 const COS_RX = Math.cos(VIEW_RX), SIN_RX = Math.sin(VIEW_RX);
 const COS_RY = Math.cos(VIEW_RY), SIN_RY = Math.sin(VIEW_RY);
 
-const DOT_COLOR      = [33, 113, 181];   // #2171b5
-const STARLINK_COLOR = [224, 92, 42];    // #e05c2a
+const GOV_COLOR        = [33,  113, 181];  // #2171b5
+const GNSS_COLOR       = [42,  170, 88];   // #2aaa58
+const COMMERCIAL_COLOR = [155, 89,  182];  // #9b59b6
+const STARLINK_COLOR   = [224, 92,  42];   // #e05c2a
+const DOT_COLOR        = GOV_COLOR;        // alias para compatibilidad
 
 function srand(s) { const x = Math.sin(s + 1) * 10000; return x - Math.floor(x); }
 
@@ -274,12 +300,18 @@ const satellites = Array.from({ length: MAX_DOTS }, (_, i) => ({
   radius: EARTH_R * (1.30 + srand(i * 13) * 0.38),
 }));
 
-let activeDots         = 0;
-let activeDotsStarlink = 0;
+let activeDots       = 0;
+let activeGov        = 0;
+let activeGnss       = 0;
+let activeCommercial = 0;
+let activeStarlink   = 0;
 
-function updateEarthDots(total, starlinkTotal) {
-  activeDots         = total;
-  activeDotsStarlink = starlinkTotal;
+function updateEarthDots(d) {
+  activeDots       = d.total;
+  activeGov        = d.gov;
+  activeGnss       = d.gnss;
+  activeCommercial = d.commercial;
+  activeStarlink   = d.starlink;
 }
 
 function project(lat, lon, r, cx, cy) {
@@ -312,35 +344,65 @@ function initEarth() {
     const t    = performance.now() / 1000;
     const gRot = t * 0.12;   // globe surface rotation
 
-    // Satellite positions — los últimos activeDotsStarlink son Starlink
-    const nonStarlink = activeDots - activeDotsStarlink;
-    const dots = satellites.slice(0, activeDots).map((s, i) => ({
-      ...project(s.lat, s.lon + s.omega * t, s.radius, cx, cy),
-      starlink: i >= nonStarlink,
-    }));
+    // Cada categoría usa su rango fijo del pool — posiciones estables entre años
+    const projSat  = s => project(s.lat, s.lon + s.omega * t, s.radius, cx, cy);
+    const govDots  = satellites.slice(0,        activeGov)                    .map(s => ({...projSat(s), cat: 0}));
+    const gnssDots = satellites.slice(GNSS_OFF, GNSS_OFF + activeGnss)        .map(s => ({...projSat(s), cat: 1}));
+    const commDots = satellites.slice(COMM_OFF, COMM_OFF + activeCommercial)  .map(s => ({...projSat(s), cat: 2}));
+    const slDots   = satellites.slice(SL_OFF,   SL_OFF   + activeStarlink)   .map(s => ({...projSat(s), cat: 3}));
+    const dots     = [...govDots, ...gnssDots, ...commDots, ...slDots];
 
     const behind = dots.filter(d => d.depth < 0);
     const front  = dots.filter(d => d.depth >= 0);
 
-    // Behind satellites (drawn before globe)
-    const [dr, dg, db] = DOT_COLOR;
+    // Círculos (gov)
+    function drawCircles(list, r, style) {
+      ctx.beginPath();
+      list.forEach(d => { ctx.moveTo(d.sx + r, d.sy); ctx.arc(d.sx, d.sy, r, 0, Math.PI * 2); });
+      ctx.fillStyle = style; ctx.fill();
+    }
+    // Diamantes ◆ (gnss)
+    function drawDiamonds(list, style) {
+      ctx.beginPath();
+      list.forEach(d => {
+        ctx.moveTo(d.sx,       d.sy - 2.4);
+        ctx.lineTo(d.sx + 2.4, d.sy);
+        ctx.lineTo(d.sx,       d.sy + 2.4);
+        ctx.lineTo(d.sx - 2.4, d.sy);
+        ctx.closePath();
+      });
+      ctx.fillStyle = style; ctx.fill();
+    }
+    // Triángulos ▲ (commercial)
+    function drawTriangles(list, style) {
+      ctx.beginPath();
+      list.forEach(d => {
+        ctx.moveTo(d.sx,       d.sy - 2.5);
+        ctx.lineTo(d.sx + 2.2, d.sy + 1.6);
+        ctx.lineTo(d.sx - 2.2, d.sy + 1.6);
+        ctx.closePath();
+      });
+      ctx.fillStyle = style; ctx.fill();
+    }
+    // Cruces ✕ (starlink)
+    function drawCrosses(list, style) {
+      ctx.fillStyle = style;
+      list.forEach(d => {
+        ctx.fillRect(d.sx - 2.2, d.sy - 0.55, 4.4, 1.1);
+        ctx.fillRect(d.sx - 0.55, d.sy - 2.2, 1.1, 4.4);
+      });
+    }
+
+    const [gr, gg, gb] = GOV_COLOR;
+    const [nr, ng, nb] = GNSS_COLOR;
+    const [cr, cg, cb] = COMMERCIAL_COLOR;
     const [sr, sg, sb] = STARLINK_COLOR;
 
-    ctx.beginPath();
-    behind.filter(d => !d.starlink).forEach(d => {
-      ctx.moveTo(d.sx + 0.9, d.sy);
-      ctx.arc(d.sx, d.sy, 0.9, 0, Math.PI * 2);
-    });
-    ctx.fillStyle = `rgba(${dr},${dg},${db},0.28)`;
-    ctx.fill();
-
-    ctx.beginPath();
-    behind.filter(d => d.starlink).forEach(d => {
-      ctx.moveTo(d.sx + 0.9, d.sy);
-      ctx.arc(d.sx, d.sy, 0.9, 0, Math.PI * 2);
-    });
-    ctx.fillStyle = `rgba(${sr},${sg},${sb},0.28)`;
-    ctx.fill();
+    // Behind (antes del globo)
+    drawCircles  (behind.filter(d => d.cat === 0), 0.9, `rgba(${gr},${gg},${gb},0.25)`);
+    drawDiamonds (behind.filter(d => d.cat === 1),      `rgba(${nr},${ng},${nb},0.25)`);
+    drawTriangles(behind.filter(d => d.cat === 2),      `rgba(${cr},${cg},${cb},0.25)`);
+    drawCrosses  (behind.filter(d => d.cat === 3),      `rgba(${sr},${sg},${sb},0.25)`);
 
     // Globe fill (opaque)
     ctx.beginPath();
@@ -350,7 +412,7 @@ function initEarth() {
 
     // Wireframe grid — only front-facing segments (depth >= 0)
     ctx.lineWidth = 0.65;
-    ctx.strokeStyle = 'rgba(33,100,175,0.75)';
+    ctx.strokeStyle = 'rgba(58,63,92,0.55)';
 
     for (let latDeg = -75; latDeg <= 75; latDeg += 15) {
       const lat = latDeg * Math.PI / 180;
@@ -387,30 +449,19 @@ function initEarth() {
     // Globe outline
     ctx.beginPath();
     ctx.arc(cx, cy, EARTH_R, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(55,135,215,0.90)';
+    ctx.strokeStyle = 'rgba(58,63,92,0.85)';
     ctx.lineWidth = 1.4;
     ctx.stroke();
 
-    // Front satellites (drawn on top of globe)
-    ctx.beginPath();
-    front.filter(d => !d.starlink).forEach(d => {
-      ctx.moveTo(d.sx + 1.1, d.sy);
-      ctx.arc(d.sx, d.sy, 1.1, 0, Math.PI * 2);
-    });
-    ctx.fillStyle = `rgba(${dr},${dg},${db},0.88)`;
-    ctx.fill();
-
-    ctx.beginPath();
-    front.filter(d => d.starlink).forEach(d => {
-      ctx.moveTo(d.sx + 1.1, d.sy);
-      ctx.arc(d.sx, d.sy, 1.1, 0, Math.PI * 2);
-    });
-    ctx.fillStyle = `rgba(${sr},${sg},${sb},0.88)`;
-    ctx.fill();
+    // Front (encima del globo)
+    drawCircles  (front.filter(d => d.cat === 0), 1.1, `rgba(${gr},${gg},${gb},0.88)`);
+    drawDiamonds (front.filter(d => d.cat === 1),      `rgba(${nr},${ng},${nb},0.88)`);
+    drawTriangles(front.filter(d => d.cat === 2),      `rgba(${cr},${cg},${cb},0.88)`);
+    drawCrosses  (front.filter(d => d.cat === 3),      `rgba(${sr},${sg},${sb},0.88)`);
 
     // Sputnik 1 — primer satélite, siempre verde y encima
-    if (activeDots >= 1) {
-      const sp = dots[0];
+    if (activeGov >= 1) {
+      const sp = govDots[0];
       ctx.beginPath();
       ctx.arc(sp.sx, sp.sy, 1.6, 0, Math.PI * 2);
       ctx.fillStyle = '#2aaa58';
@@ -433,11 +484,19 @@ let staticBuffer   = null;
 let ambientGain    = null;
 let staticGain     = null;
 let ambientStarted = false;
-let repeatTimer    = null;
-let activeSource   = null;
-let activeGain     = null;
-let lastYear       = null;
-let _audioStarted  = false;
+let lastYear      = null;
+let _audioStarted = false;
+
+// 4 pistas independientes — una por tipo de satélite
+const SOUND_TYPES = {
+  gov:        { pitch: 0.45, pitchVar: 0.04 },
+  gnss:       { pitch: 0.85, pitchVar: 0.04 },
+  commercial: { pitch: 1.45, pitchVar: 0.04 },
+  starlink:   { pitch: 2.30, pitchVar: 0.04 },
+};
+const soundState = Object.fromEntries(
+  Object.keys(SOUND_TYPES).map(k => [k, { timer: null, source: null, gain: null }])
+);
 
 function initAudio() {
   if (_audioStarted) return;
@@ -455,7 +514,7 @@ function initAudio() {
         audioCtx.decodeAudioData(aa),
         audioCtx.decodeAudioData(sta),
       ]);
-      startAmbient();
+      if (_audioOn) startAmbient();
     } catch (e) {
       console.error('Audio init error:', e);
       _audioStarted = false;
@@ -463,8 +522,13 @@ function initAudio() {
   })();
 }
 
+let _ambSrc  = null;
+let _statSrc = null;
+
+let _ambientEnabled = true;
+
 function startAmbient() {
-  if (ambientStarted || !ambientBuffer || !staticBuffer) return;
+  if (ambientStarted || !ambientBuffer || !staticBuffer || !_ambientEnabled) return;
   ambientStarted = true;
 
   ambientGain = audioCtx.createGain();
@@ -475,17 +539,25 @@ function startAmbient() {
   staticGain.gain.value = 0;
   staticGain.connect(audioCtx.destination);
 
-  const ambSrc = audioCtx.createBufferSource();
-  ambSrc.buffer = ambientBuffer;
-  ambSrc.loop   = true;
-  ambSrc.connect(ambientGain);
-  ambSrc.start();
+  _ambSrc = audioCtx.createBufferSource();
+  _ambSrc.buffer = ambientBuffer;
+  _ambSrc.loop   = true;
+  _ambSrc.connect(ambientGain);
+  _ambSrc.start();
 
-  const statSrc = audioCtx.createBufferSource();
-  statSrc.buffer = staticBuffer;
-  statSrc.loop   = true;
-  statSrc.connect(staticGain);
-  statSrc.start();
+  _statSrc = audioCtx.createBufferSource();
+  _statSrc.buffer = staticBuffer;
+  _statSrc.loop   = true;
+  _statSrc.connect(staticGain);
+  _statSrc.start();
+}
+
+function stopAmbient() {
+  try { if (_ambSrc)  _ambSrc.stop();  } catch (_) {}
+  try { if (_statSrc) _statSrc.stop(); } catch (_) {}
+  _ambSrc = null; _statSrc = null;
+  ambientGain = null; staticGain = null;
+  ambientStarted = false;
 }
 
 function updateAmbientMix(total) {
@@ -496,51 +568,182 @@ function updateAmbientMix(total) {
   staticGain.gain.linearRampToValueAtTime(1.0 * t,         now + 0.5);
 }
 
-function playOnce(interval) {
-  if (!satBuffer || !audioCtx) return;
+function playOnceType(type, interval) {
+  if (!satBuffer || !audioCtx || !_audioOn) return;
+  const st   = soundState[type];
+  const spec = SOUND_TYPES[type];
 
-  if (activeGain) {
-    activeGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
-  }
+  if (st.gain) st.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
 
   const gain = audioCtx.createGain();
   gain.gain.setValueAtTime(0, audioCtx.currentTime);
-  gain.gain.linearRampToValueAtTime(0.35, audioCtx.currentTime + 0.006);
+  gain.gain.linearRampToValueAtTime(0.30, audioCtx.currentTime + 0.006);
   gain.connect(audioCtx.destination);
 
   const source = audioCtx.createBufferSource();
   source.buffer = satBuffer;
-  source.playbackRate.value = 0.97 + Math.random() * 0.10;
+  source.playbackRate.value = spec.pitch + Math.random() * spec.pitchVar;
   source.connect(gain);
   source.start();
   source.onended = () => { try { gain.disconnect(); } catch (_) {} };
 
-  activeSource = source;
-  activeGain   = gain;
-
-  repeatTimer = setTimeout(() => playOnce(interval), interval);
+  st.source = source;
+  st.gain   = gain;
+  st.timer  = setTimeout(() => playOnceType(type, interval), interval);
 }
 
-function playSounds(total) {
+function playSounds(d) {
   if (!satBuffer) return;
   stopSounds();
-  const t        = total / MAX_TOTAL;
-  const interval = Math.round(MAX_INTERVAL * Math.pow(MIN_INTERVAL / MAX_INTERVAL, t));
-  repeatTimer = setTimeout(() => playOnce(interval), 160);
+
+  // Normalizar contra el máximo histórico global (Starlink 2025 = 6770)
+  // → en años tempranos los beeps son lentos; en 2025 Starlink alcanza MIN_INTERVAL
+  const GLOBAL_MAX = MAX_SL; // 6770 — el mayor valor de cualquier categoría en cualquier año
+
+  Object.keys(SOUND_TYPES).forEach(type => {
+    const val = d[type] || 0;
+    if (!activeTypes.has(type) || val <= 0) return;
+    const t        = val / GLOBAL_MAX;
+    const interval = Math.round(MAX_INTERVAL * Math.pow(MIN_INTERVAL / MAX_INTERVAL, t));
+    soundState[type].timer = setTimeout(() => playOnceType(type, interval), 160);
+  });
+}
+
+function stopSoundType(type) {
+  const st = soundState[type];
+  clearTimeout(st.timer);
+  st.timer = null;
+  if (st.gain && audioCtx) st.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
+  st.source = null;
+  st.gain   = null;
 }
 
 function stopSounds() {
-  clearTimeout(repeatTimer);
-  repeatTimer = null;
-  if (activeGain && audioCtx) {
-    activeGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
-  }
-  activeSource = null;
-  activeGain   = null;
+  Object.keys(SOUND_TYPES).forEach(stopSoundType);
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
+// ── Leyenda interactiva ───────────────────────────────────────────────────────
+function previewSound(type, btn) {
+  if (!satBuffer || !audioCtx) return;
+  const spec = SOUND_TYPES[type];
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0, audioCtx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.45, audioCtx.currentTime + 0.008);
+  gain.gain.setTargetAtTime(0, audioCtx.currentTime + 0.05, 0.08);
+  gain.connect(audioCtx.destination);
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = satBuffer;
+  source.playbackRate.value = spec.pitch;
+  source.connect(gain);
+  source.start();
+  source.onended = () => { try { gain.disconnect(); } catch (_) {} };
+
+  // Feedback visual breve
+  btn.textContent = '♪';
+  setTimeout(() => { btn.textContent = '▶'; }, 400);
+}
+
+function buildLegend() {
+  const container = document.getElementById('legend');
+  const SHAPE_SVG = {
+    circle:   c => `<circle cx="7" cy="7" r="6" fill="${c}"/>`,
+    diamond:  c => `<polygon points="7,0 14,7 7,14 0,7" fill="${c}"/>`,
+    triangle: c => `<polygon points="7,1 14,13 0,13" fill="${c}"/>`,
+    cross:    c => `<rect x="0" y="5" width="14" height="4" fill="${c}"/><rect x="5" y="0" width="4" height="14" fill="${c}"/>`,
+  };
+
+  LEGEND_TYPES.forEach(({ key, label, color, shape }) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    const playBtn = document.createElement('button');
+    playBtn.className = 'legend-play';
+    playBtn.textContent = '▶';
+    playBtn.title = `Previsualizar sonido: ${label}`;
+    playBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      previewSound(key, playBtn);
+    });
+
+    item.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14">${SHAPE_SVG[shape](color)}</svg><span>${label}</span>`;
+    item.appendChild(playBtn);
+
+    item.addEventListener('click', () => {
+      if (activeTypes.has(key)) {
+        if (activeTypes.size === 1) return; // siempre al menos uno activo
+        activeTypes.delete(key);
+        item.classList.add('inactive');
+      } else {
+        activeTypes.add(key);
+        item.classList.remove('inactive');
+      }
+      if (_updateAreas) _updateAreas();
+      if (_currentYearData) {
+        updateEarthDots(getEarthData(_currentYearData));
+        playSounds(_currentYearData);
+        updateAmbientMix(getFilteredTotal(_currentYearData));
+      }
+    });
+
+    container.appendChild(item);
+  });
+}
+
 fetch('data.json')
   .then(r => r.json())
-  .then(data => { buildChart(data); initEarth(); })
+  .then(data => { buildChart(data); initEarth(); buildLegend(); })
   .catch(err => console.error('Error loading data:', err));
+
+const audioBtn   = document.getElementById('audio-btn');
+const ambientBtn = document.getElementById('ambient-btn');
+let _audioOn = false;
+
+audioBtn.addEventListener('click', () => {
+  if (!_audioOn) {
+    _audioOn = true;
+    if (_audioStarted && audioCtx && ambientBuffer) {
+      startAmbient();
+    } else {
+      initAudio();
+    }
+    audioBtn.textContent = '⏸ Desactivar audio';
+    audioBtn.style.color       = '#2aaa58';
+    audioBtn.style.borderColor = '#2aaa58';
+    ambientBtn.disabled = false;
+    ambientBtn.textContent = '◎ Ambiente';
+    ambientBtn.style.color       = '#2aaa58';
+    ambientBtn.style.borderColor = '#2aaa58';
+    document.getElementById('legend').classList.add('audio-active');
+  } else {
+    _audioOn = false;
+    stopAmbient();
+    stopSounds();
+    audioBtn.textContent = '▶ Activar audio';
+    audioBtn.style.color       = '';
+    audioBtn.style.borderColor = '';
+    _ambientEnabled = true;
+    ambientBtn.disabled = true;
+    ambientBtn.textContent = '◎ Ambiente';
+    ambientBtn.style.color       = '';
+    ambientBtn.style.borderColor = '';
+    document.getElementById('legend').classList.remove('audio-active');
+  }
+});
+
+ambientBtn.addEventListener('click', () => {
+  if (_ambientEnabled) {
+    _ambientEnabled = false;
+    stopAmbient();
+    ambientBtn.textContent = '◎ Ambiente';
+    ambientBtn.style.color       = '';
+    ambientBtn.style.borderColor = '';
+  } else {
+    _ambientEnabled = true;
+    startAmbient();
+    ambientBtn.textContent = '◎ Ambiente';
+    ambientBtn.style.color       = '#2aaa58';
+    ambientBtn.style.borderColor = '#2aaa58';
+  }
+});

@@ -9,12 +9,21 @@
 <body>
 
   <h1>Satélites en órbita · 1958–2025</h1>
+
   <div id="viz">
     <svg id="chart"></svg>
     <canvas id="earth"></canvas>
   </div>
+
+  <div id="controls-bar">
+    <div id="legend"></div>
+    <div id="audio-controls">
+      <button id="audio-btn">▶ Activar audio</button>
+      <button id="ambient-btn" disabled>◎ Ambiente</button>
+    </div>
+  </div>
+
   <footer>Fuente: CelesTrak SATCAT (abril 2025)</footer>
-  
 
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <script src="script.js"></script>

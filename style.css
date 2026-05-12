@@ -9,27 +9,133 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   min-height: 100vh;
-  gap: 10px;
-  padding: 16px;
+  padding: 32px 16px 24px;
+  gap: 0;
   box-sizing: border-box;
 }
 
 h1 {
-  font-size: 13px;
+  font-size: 20px;
   font-weight: 500;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: #3a3f5c;
   text-align: center;
+  margin-bottom: 18px;
 }
 
+/* ── Barra de controles (leyenda + audio) ── */
+#controls-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  width: min(92vw, 1080px);
+  margin-top: 0;
+  margin-bottom: 14px;
+}
+
+#legend {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px 10px;
+  justify-content: center;
+  width: 100%;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #3a3f5c;
+  letter-spacing: .04em;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+
+.legend-item.inactive {
+  opacity: 0.30;
+}
+
+.legend-item:hover {
+  border-color: #d5d9ea;
+}
+
+/* Botones de preview — ocultos hasta que el audio esté activo */
+.legend-play {
+  background: none;
+  border: 1px solid #d5d9ea;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 9px;
+  color: #3a3f5c;
+  cursor: pointer;
+  line-height: 1;
+  margin-left: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, border-color 0.15s, color 0.15s;
+}
+
+#legend.audio-active .legend-play {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.legend-play:hover {
+  border-color: #3a3f5c;
+  color: #3a3f5c;
+}
+
+#audio-controls {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+#audio-btn, #ambient-btn {
+  background: none;
+  border: 1px solid #d5d9ea;
+  border-radius: 6px;
+  padding: 5px 13px;
+  font-size: 11px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #3a3f5c;
+  letter-spacing: .05em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+#audio-btn {
+  min-width: 148px;
+}
+
+#audio-btn:hover, #ambient-btn:hover:not(:disabled) {
+  border-color: #2171b5;
+  color: #2171b5;
+}
+
+#ambient-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Visualización ── */
 #viz {
   display: flex;
   align-items: center;
   gap: 28px;
   width: min(92vw, 1080px);
+  margin-bottom: 6px;
 }
 
 #chart {
@@ -44,8 +150,8 @@ h1 {
 
 /* Axes */
 .axis text {
-  font-size: 11px;
-  fill: #9099b8;
+  font-size: 12px;
+  fill: #3a3f5c;
 }
 
 .axis path,
@@ -70,7 +176,7 @@ h1 {
 /* Line */
 .line {
   fill: none;
-  stroke: #2171b5;
+  stroke: #3a3f5c;
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -78,19 +184,21 @@ h1 {
 
 /* Axis labels */
 .axis-label {
-  font-size: 11px;
-  fill: #9099b8;
+  font-size: 13px;
+  fill: #3a3f5c;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
 
 footer {
-  font-size: 11px;
-  color: #9099b8;
+  font-size: 13px;
+  color: #3a3f5c;
   letter-spacing: .04em;
+  margin-top: auto;
+  padding-bottom: 20px;
 }
 
-/* Tooltip */
+/* ── Tooltip ── */
 .tooltip {
   position: absolute;
   background: #fff;
@@ -104,8 +212,8 @@ footer {
 }
 
 .tt-year {
-  font-size: 11px;
-  color: #9099b8;
+  font-size: 12px;
+  color: #3a3f5c;
   text-transform: uppercase;
   letter-spacing: .08em;
 }
@@ -113,12 +221,12 @@ footer {
 .tt-val {
   font-size: 16px;
   font-weight: 600;
-  color: #2171b5;
+  color: #3a3f5c;
 }
 
 .tt-new {
-  font-size: 11px;
-  color: #9099b8;
+  font-size: 12px;
+  color: #3a3f5c;
 }
 
 /* Crosshair */
@@ -131,7 +239,7 @@ footer {
 
 /* Snap dot */
 .snap-dot {
-  fill: #2171b5;
+  fill: #3a3f5c;
   stroke: #f5f6fa;
   stroke-width: 2;
   pointer-events: none;
