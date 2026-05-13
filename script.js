@@ -234,16 +234,18 @@ function buildChart(data) {
         { key: 'starlink',   icon: '✕', label: 'Starlink',        color: '#e05c2a' },
       ];
 
-      const ttNew = d.year === 1958 && activeTypes.has('gov')
-        ? `<span class="tt-new" style="color:#2aaa58;font-weight:600">Sputnik 1</span>`
-        : BREAKDOWN
-            .filter(t => activeTypes.has(t.key) && filtered[t.key] > 0)
-            .map(t => `<span class="tt-new"><span style="color:${t.color}">${t.icon}</span> ${t.label}: ${filtered[t.key].toLocaleString()}</span>`)
-            .join('<br>');
+      const ttNew = BREAKDOWN
+        .filter(t => activeTypes.has(t.key) && filtered[t.key] > 0)
+        .map(t => `<span class="tt-new"><span style="color:${t.color}">${t.icon}</span> ${t.label}: ${filtered[t.key].toLocaleString()}</span>`)
+        .join('<br>');
+
+      const ttSputnik = (d.year === 1958 && activeTypes.has('gov'))
+        ? `<br><span class="tt-new">Sputnik 1</span>`
+        : '';
 
       tooltip
         .style('opacity', 1)
-        .html(`<span class="tt-year">${d.year}</span><br><span class="tt-val">${ttVal}</span><br>${ttNew}`)
+        .html(`<span class="tt-year">${d.year}</span><br><span class="tt-val">${ttVal}</span><br>${ttNew}${ttSputnik}`)
         .style('left', (event.pageX + 18) + 'px')
         .style('top',  (event.pageY - 48) + 'px');
 
@@ -459,12 +461,12 @@ function initEarth() {
     drawTriangles(front.filter(d => d.cat === 2),      `rgba(${cr},${cg},${cb},0.88)`);
     drawCrosses  (front.filter(d => d.cat === 3),      `rgba(${sr},${sg},${sb},0.88)`);
 
-    // Sputnik 1 — primer satélite, siempre verde y encima
+    // Sputnik 1 — opacidad máxima siempre, encima de todo
     if (activeGov >= 1) {
       const sp = govDots[0];
       ctx.beginPath();
-      ctx.arc(sp.sx, sp.sy, 1.6, 0, Math.PI * 2);
-      ctx.fillStyle = '#2aaa58';
+      ctx.arc(sp.sx, sp.sy, 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = `rgb(${gr},${gg},${gb})`;
       ctx.fill();
     }
 
