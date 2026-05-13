@@ -32,7 +32,7 @@ h1 {
   flex-direction: column;
   align-items: center;
   gap: 18px;
-  width: min(92vw, 1080px);
+  width: min(92vw, 1280px);
   margin-top: 0;
   margin-bottom: 14px;
 }
@@ -133,13 +133,13 @@ h1 {
 #viz {
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 26px;
   width: min(92vw, 1080px);
   margin-bottom: 6px;
 }
 
 #chart {
-  flex: 1;
+  flex: 15;
   min-width: 0;
   overflow: visible;
 }
@@ -165,7 +165,7 @@ h1 {
 
 /* Grid */
 .grid line {
-  stroke: #e4e7f2;
+  stroke: #b6bcd3;
   stroke-dasharray: 3 3;
 }
 

@@ -26,7 +26,7 @@ function getFilteredTotal(d) {
 }
 
 // ── Dimensions ────────────────────────────────────────────────────────────────
-const margin = { top: 16, right: 32, bottom: 64, left: 88 };
+const margin = { top: 16, right: 32, bottom: 64, left: 64 };
 
 function getSize() {
   const el = document.getElementById('chart');
@@ -246,8 +246,35 @@ function buildChart(data) {
       tooltip
         .style('opacity', 1)
         .html(`<span class="tt-year">${d.year}</span><br><span class="tt-val">${ttVal}</span><br>${ttNew}${ttSputnik}`)
-        .style('left', (event.pageX + 18) + 'px')
-        .style('top',  (event.pageY - 48) + 'px');
+
+
+
+
+
+
+// Posición del tooltip según el año
+let leftPos, topPos;
+if (d.year >= 2005) {
+  // A partir de 2005: arriba a la izquierda del cursor
+  leftPos = event.pageX - 200;
+  topPos = event.pageY - 90;
+} else {
+  // Antes de 2005: posición original (derecha y arriba)
+  leftPos = event.pageX + 18;
+  topPos = event.pageY - 90;
+}
+
+
+
+// Evitar que el cuadro de info tape al Mapa Geo
+leftPos = Math.max(10, leftPos);
+topPos = Math.max(10, topPos);
+
+tooltip
+  .style('opacity', 1)
+  .html(`<span class="tt-year">${d.year}</span><br><span class="tt-val">${ttVal}</span><br>${ttNew}${ttSputnik}`)
+  .style('left', leftPos + 'px')
+  .style('top', topPos + 'px');
 
       if (d.year !== lastYear) {
         lastYear = d.year;
@@ -263,8 +290,12 @@ function buildChart(data) {
       tooltip.style('opacity', 0);
       stopSounds();
       lastYear = null;
+      updateAmbientMix(0);
     });
 }
+
+
+
 
 // ── Earth ─────────────────────────────────────────────────────────────────────
 const EARTH_R    = 108;
@@ -489,6 +520,13 @@ let ambientStarted = false;
 let lastYear      = null;
 let _audioStarted = false;
 
+
+
+let noiseNode      = null;   // generador de ruido sintético
+let filterNode     = null;   // filtro para el ruido
+let noiseGain      = null;   // ganancia del ruido
+
+
 // 4 pistas independientes — una por tipo de satélite
 const SOUND_TYPES = {
   gov:        { pitch: 0.45, pitchVar: 0.04 },
@@ -506,11 +544,18 @@ function initAudio() {
   (async () => {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+
+
+
       const [sa, aa, sta] = await Promise.all([
         fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()),
-        fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()),
+        fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()), 
         fetch('Estatica.mp3').then(r => r.arrayBuffer()),
       ]);
+
+
+
       [satBuffer, ambientBuffer, staticBuffer] = await Promise.all([
         audioCtx.decodeAudioData(sa),
         audioCtx.decodeAudioData(aa),
@@ -524,22 +569,28 @@ function initAudio() {
   })();
 }
 
+
+
+
+
 let _ambSrc  = null;
 let _statSrc = null;
 
 let _ambientEnabled = true;
 
+
+
+
+
+// Funcion para crear ruido
 function startAmbient() {
-  if (ambientStarted || !ambientBuffer || !staticBuffer || !_ambientEnabled) return;
+  if (ambientStarted || !ambientBuffer || !_ambientEnabled) return;
   ambientStarted = true;
+
 
   ambientGain = audioCtx.createGain();
   ambientGain.gain.value = 0.75;
   ambientGain.connect(audioCtx.destination);
-
-  staticGain = audioCtx.createGain();
-  staticGain.gain.value = 0;
-  staticGain.connect(audioCtx.destination);
 
   _ambSrc = audioCtx.createBufferSource();
   _ambSrc.buffer = ambientBuffer;
@@ -547,12 +598,37 @@ function startAmbient() {
   _ambSrc.connect(ambientGain);
   _ambSrc.start();
 
-  _statSrc = audioCtx.createBufferSource();
-  _statSrc.buffer = staticBuffer;
-  _statSrc.loop   = true;
-  _statSrc.connect(staticGain);
-  _statSrc.start();
+
+  const bufferSize = 4096;
+  noiseNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+  noiseNode.onaudioprocess = (e) => {
+    const output = e.outputBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;   
+    }
+  };
+  filterNode = audioCtx.createBiquadFilter();
+  filterNode.type = 'lowpass';        
+  filterNode.frequency.value = 200;   
+  filterNode.Q.value = 1;
+  noiseGain = audioCtx.createGain();
+  noiseGain.gain.value = 0.1;         
+
+  noiseNode.connect(filterNode);
+  filterNode.connect(noiseGain);
+  noiseGain.connect(audioCtx.destination);
+
+
+  staticGain = audioCtx.createGain();
+  staticGain.gain.value = 0;
+  staticGain.connect(audioCtx.destination);
 }
+
+
+
+
+
+
 
 function stopAmbient() {
   try { if (_ambSrc)  _ambSrc.stop();  } catch (_) {}
@@ -562,13 +638,43 @@ function stopAmbient() {
   ambientStarted = false;
 }
 
+
+
+
+
 function updateAmbientMix(total) {
-  if (!ambientGain || !staticGain || !audioCtx) return;
-  const t   = total / MAX_TOTAL;
+  if (!audioCtx) return;
+  const t = Math.min(1, total / MAX_TOTAL);
   const now = audioCtx.currentTime;
-  ambientGain.gain.linearRampToValueAtTime(0.75 * (1 - t), now + 0.5);
-  staticGain.gain.linearRampToValueAtTime(1.0 * t,         now + 0.5);
+
+
+  if (filterNode) {
+    const minFreq = 500;     
+    const maxFreq = 7500;   
+    const freq = minFreq + t * (maxFreq - minFreq);
+    filterNode.frequency.linearRampToValueAtTime(freq, now + 0.3);
+  }
+
+
+  if (noiseGain && noiseGain.gain.value !== 0.25) {
+    noiseGain.gain.value = 0.25;   
+  }
+
+
+  if (ambientGain && staticGain) {
+    ambientGain.gain.linearRampToValueAtTime(0.75 * (1 - t), now + 0.5);
+    staticGain.gain.linearRampToValueAtTime(1.0 * t, now + 0.5);
+  }
 }
+
+
+
+
+
+/* 
+  DEJAR COMENTADO ESTO DESACTIVA LOS SONIDOS SEGUN EL TIPO DE SATELITE
+
+
 
 function playOnceType(type, interval) {
   if (!satBuffer || !audioCtx || !_audioOn) return;
@@ -611,6 +717,8 @@ function playSounds(d) {
   });
 }
 
+*/
+
 function stopSoundType(type) {
   const st = soundState[type];
   clearTimeout(st.timer);
@@ -623,6 +731,11 @@ function stopSoundType(type) {
 function stopSounds() {
   Object.keys(SOUND_TYPES).forEach(stopSoundType);
 }
+
+
+
+
+
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 // ── Leyenda interactiva ───────────────────────────────────────────────────────
@@ -731,6 +844,21 @@ audioBtn.addEventListener('click', () => {
     ambientBtn.style.color       = '';
     ambientBtn.style.borderColor = '';
     document.getElementById('legend').classList.remove('audio-active');
+
+
+    if (noiseNode) {
+      try { noiseNode.disconnect(); } catch(e) {}
+      noiseNode = null;
+    }
+    if (filterNode) {
+      try { filterNode.disconnect(); } catch(e) {}
+      filterNode = null;
+    }
+    if (noiseGain) {
+      try { noiseGain.disconnect(); } catch(e) {}
+      noiseGain = null;
+    }
+
   }
 });
 
