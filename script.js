@@ -517,8 +517,11 @@ let staticBuffer   = null;
 let ambientGain    = null;
 let staticGain     = null;
 let ambientStarted = false;
-let lastYear      = null;
-let _audioStarted = false;
+let lastYear       = null;
+let _audioStarted  = false;
+let soundMode      = 'beeps';
+let modeBtn        = null;
+
 
 
 
@@ -538,24 +541,21 @@ const soundState = Object.fromEntries(
   Object.keys(SOUND_TYPES).map(k => [k, { timer: null, source: null, gain: null }])
 );
 
+
+
+
+
 function initAudio() {
-  if (_audioStarted) return;
+  if (_audioStarted) return Promise.resolve();
   _audioStarted = true;
-  (async () => {
+  return (async () => {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-
-
-
       const [sa, aa, sta] = await Promise.all([
         fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()),
         fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()), 
         fetch('Estatica.mp3').then(r => r.arrayBuffer()),
       ]);
-
-
-
       [satBuffer, ambientBuffer, staticBuffer] = await Promise.all([
         audioCtx.decodeAudioData(sa),
         audioCtx.decodeAudioData(aa),
@@ -584,44 +584,71 @@ let _ambientEnabled = true;
 
 // Funcion para crear ruido
 function startAmbient() {
-  if (ambientStarted || !ambientBuffer || !_ambientEnabled) return;
+  if (ambientStarted || !_ambientEnabled) return;
   ambientStarted = true;
 
+  // Música de fondo (ambiente) – solo si existe el buffer
+  if (ambientBuffer) {
+    ambientGain = audioCtx.createGain();
+    ambientGain.gain.value = 0.75;
+    ambientGain.connect(audioCtx.destination);
+    _ambSrc = audioCtx.createBufferSource();
+    _ambSrc.buffer = ambientBuffer;
+    _ambSrc.loop = true;
+    _ambSrc.connect(ambientGain);
+    _ambSrc.start();
+  } else {
+    ambientGain = audioCtx.createGain();
+    ambientGain.gain.value = 0;
+    ambientGain.connect(audioCtx.destination);
+  }
 
-  ambientGain = audioCtx.createGain();
-  ambientGain.gain.value = 0.75;
-  ambientGain.connect(audioCtx.destination);
+  // Ruido sintético – solo si el modo lo requiere
+  if (soundMode === 'noise') {
+    createNoise();
+  }
 
-  _ambSrc = audioCtx.createBufferSource();
-  _ambSrc.buffer = ambientBuffer;
-  _ambSrc.loop   = true;
-  _ambSrc.connect(ambientGain);
-  _ambSrc.start();
+  // staticGain para compatibilidad (no se usa)
+  staticGain = audioCtx.createGain();
+  staticGain.gain.value = 0;
+  staticGain.connect(audioCtx.destination);
+}
 
-
+function createNoise() {
+  if (noiseNode) return; // ya existe
   const bufferSize = 4096;
   noiseNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
   noiseNode.onaudioprocess = (e) => {
     const output = e.outputBuffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
-      output[i] = Math.random() * 2 - 1;   
+      output[i] = Math.random() * 2 - 1;
     }
   };
   filterNode = audioCtx.createBiquadFilter();
-  filterNode.type = 'lowpass';        
-  filterNode.frequency.value = 200;   
+  filterNode.type = 'lowpass';
+  filterNode.frequency.value = 200;
   filterNode.Q.value = 1;
   noiseGain = audioCtx.createGain();
-  noiseGain.gain.value = 0.1;         
+  noiseGain.gain.value = 0.1;
 
   noiseNode.connect(filterNode);
   filterNode.connect(noiseGain);
   noiseGain.connect(audioCtx.destination);
+}
 
-
-  staticGain = audioCtx.createGain();
-  staticGain.gain.value = 0;
-  staticGain.connect(audioCtx.destination);
+function destroyNoise() {
+  if (noiseNode) {
+    try { noiseNode.disconnect(); } catch(e) {}
+    noiseNode = null;
+  }
+  if (filterNode) {
+    try { filterNode.disconnect(); } catch(e) {}
+    filterNode = null;
+  }
+  if (noiseGain) {
+    try { noiseGain.disconnect(); } catch(e) {}
+    noiseGain = null;
+  }
 }
 
 
@@ -642,28 +669,20 @@ function stopAmbient() {
 
 
 
+
 function updateAmbientMix(total) {
   if (!audioCtx) return;
   const t = Math.min(1, total / MAX_TOTAL);
   const now = audioCtx.currentTime;
 
-
-  if (filterNode) {
-    const minFreq = 500;     
-    const maxFreq = 7500;   
+  if (soundMode === 'noise' && filterNode) {
+    const minFreq = 500;
+    const maxFreq = 7500;
     const freq = minFreq + t * (maxFreq - minFreq);
     filterNode.frequency.linearRampToValueAtTime(freq, now + 0.3);
-  }
-
-
-  if (noiseGain && noiseGain.gain.value !== 0.25) {
-    noiseGain.gain.value = 0.25;   
-  }
-
-
-  if (ambientGain && staticGain) {
-    ambientGain.gain.linearRampToValueAtTime(0.75 * (1 - t), now + 0.5);
-    staticGain.gain.linearRampToValueAtTime(1.0 * t, now + 0.5);
+    if (noiseGain && noiseGain.gain.value !== 0.25) {
+      noiseGain.gain.value = 0.25;
+    }
   }
 }
 
@@ -671,12 +690,13 @@ function updateAmbientMix(total) {
 
 
 
-/* 
-  DEJAR COMENTADO ESTO DESACTIVA LOS SONIDOS SEGUN EL TIPO DE SATELITE
+
 
 
 
 function playOnceType(type, interval) {
+  if (soundMode !== 'beeps') return;
+
   if (!satBuffer || !audioCtx || !_audioOn) return;
   const st   = soundState[type];
   const spec = SOUND_TYPES[type];
@@ -701,6 +721,8 @@ function playOnceType(type, interval) {
 }
 
 function playSounds(d) {
+  if (soundMode !== 'beeps') return;
+
   if (!satBuffer) return;
   stopSounds();
 
@@ -717,7 +739,12 @@ function playSounds(d) {
   });
 }
 
-*/
+
+
+
+
+
+
 
 function stopSoundType(type) {
   const st = soundState[type];
@@ -739,27 +766,58 @@ function stopSounds() {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 // ── Leyenda interactiva ───────────────────────────────────────────────────────
+
+
 function previewSound(type, btn) {
+  // Si el audio no está inicializado, lo inicializamos y esperamos
+  if (!audioCtx || !satBuffer) {
+    // Guardamos temporalmente el tipo y el botón para reproducir después de la inicialización
+    if (!_audioStarted) {
+      // Inicializar audio si no se ha hecho
+      initAudio().then(() => {
+        // Esperar un poco a que se decodifiquen los buffers
+        setTimeout(() => {
+          if (satBuffer && audioCtx) {
+            playPreviewSound(type, btn);
+          }
+        }, 200);
+      }).catch(e => console.error(e));
+      return;
+    } else {
+      // Ya se inició pero quizás aún no hay buffer
+      setTimeout(() => {
+        if (satBuffer && audioCtx) {
+          playPreviewSound(type, btn);
+        }
+      }, 200);
+      return;
+    }
+  }
+  playPreviewSound(type, btn);
+}
+
+function playPreviewSound(type, btn) {
   if (!satBuffer || !audioCtx) return;
   const spec = SOUND_TYPES[type];
-
   const gain = audioCtx.createGain();
   gain.gain.setValueAtTime(0, audioCtx.currentTime);
   gain.gain.linearRampToValueAtTime(0.45, audioCtx.currentTime + 0.008);
   gain.gain.setTargetAtTime(0, audioCtx.currentTime + 0.05, 0.08);
   gain.connect(audioCtx.destination);
-
   const source = audioCtx.createBufferSource();
   source.buffer = satBuffer;
   source.playbackRate.value = spec.pitch;
   source.connect(gain);
   source.start();
   source.onended = () => { try { gain.disconnect(); } catch (_) {} };
-
-  // Feedback visual breve
   btn.textContent = '♪';
   setTimeout(() => { btn.textContent = '▶'; }, 400);
 }
+
+
+
+
+
 
 function buildLegend() {
   const container = document.getElementById('legend');
@@ -806,6 +864,12 @@ function buildLegend() {
   });
 }
 
+
+
+
+
+
+
 fetch('data.json')
   .then(r => r.json())
   .then(data => { buildChart(data); initEarth(); buildLegend(); })
@@ -815,36 +879,75 @@ const audioBtn   = document.getElementById('audio-btn');
 const ambientBtn = document.getElementById('ambient-btn');
 let _audioOn = false;
 
+
+
+modeBtn = document.getElementById('mode-btn');
+if (modeBtn) {
+  modeBtn.addEventListener('click', () => {
+    if (!_audioOn) return;
+    modeBtn.disabled = false;
+    const newMode = soundMode === 'noise' ? 'beeps' : 'noise';
+    setSoundMode(newMode);
+  });
+}
+
+
+
+
+
+
+
+
 audioBtn.addEventListener('click', () => {
   if (!_audioOn) {
+    // ACTIVAR AUDIOO
     _audioOn = true;
+    
     if (_audioStarted && audioCtx && ambientBuffer) {
       startAmbient();
     } else {
       initAudio();
     }
+    
+
     audioBtn.textContent = '⏸ Desactivar audio';
-    audioBtn.style.color       = '#2aaa58';
+    audioBtn.style.color = '#2aaa58';
     audioBtn.style.borderColor = '#2aaa58';
+    
+
     ambientBtn.disabled = false;
     ambientBtn.textContent = '◎ Ambiente';
-    ambientBtn.style.color       = '#2aaa58';
+    ambientBtn.style.color = '#2aaa58';
     ambientBtn.style.borderColor = '#2aaa58';
+    
+
+    if (modeBtn) {
+      modeBtn.disabled = false;
+      modeBtn.textContent = soundMode === 'noise' ? '▶ Modo ruido' : '▶ Modo pitido';
+    }
+    
     document.getElementById('legend').classList.add('audio-active');
+    
   } else {
+
     _audioOn = false;
     stopAmbient();
     stopSounds();
+    
     audioBtn.textContent = '▶ Activar audio';
-    audioBtn.style.color       = '';
+    audioBtn.style.color = '';
     audioBtn.style.borderColor = '';
+    
     _ambientEnabled = true;
     ambientBtn.disabled = true;
     ambientBtn.textContent = '◎ Ambiente';
-    ambientBtn.style.color       = '';
+    ambientBtn.style.color = '';
     ambientBtn.style.borderColor = '';
+    
+    if (modeBtn) modeBtn.disabled = true;
+    
     document.getElementById('legend').classList.remove('audio-active');
-
+    
 
     if (noiseNode) {
       try { noiseNode.disconnect(); } catch(e) {}
@@ -858,9 +961,14 @@ audioBtn.addEventListener('click', () => {
       try { noiseGain.disconnect(); } catch(e) {}
       noiseGain = null;
     }
-
   }
 });
+
+
+
+
+
+
 
 ambientBtn.addEventListener('click', () => {
   if (_ambientEnabled) {
@@ -876,4 +984,36 @@ ambientBtn.addEventListener('click', () => {
     ambientBtn.style.color       = '#2aaa58';
     ambientBtn.style.borderColor = '#2aaa58';
   }
-});
+})
+
+
+
+
+
+
+
+
+
+function setSoundMode(mode) {  
+  if (!audioCtx || !_audioOn) return;
+  if (soundMode === mode) return;
+  soundMode = mode;
+
+  if (soundMode === 'beeps') {
+    destroyNoise();      
+    stopSounds();        
+
+  } else { 
+    stopSounds();       
+    destroyNoise();     
+    createNoise();      
+    updateAmbientMix(0); 
+  }
+
+  if (modeBtn) {
+    modeBtn.textContent = soundMode === 'noise' ? '▶ Modo ruido' : '▶ Modo pitidos';
+  }
+}
+
+
+
