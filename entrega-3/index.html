@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fisicalización Satelital — Entrega 3</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="site-nav">
+    <a href="/"           class="nav-tab">Entrega 2 · Visualización</a>
+    <a href="/entrega-3/" class="nav-tab active">Entrega 3 · Fisicalización</a>
+  </nav>
+
+  <!-- ── PANTALLA 1: SETUP ───────────────────────────────────────────── -->
+  <div id="screen-setup" class="screen active">
+    <div class="setup-card">
+      <h1>Satélites en órbita</h1>
+      <p class="subtitle">Fisicalización interactiva · 1958–2025</p>
+
+      <div class="setup-instructions">
+        <div class="instruction-step">
+          <span class="step-num">1</span>
+          <span>Imprime la hoja con el planeta Tierra y colócala sobre la mesa</span>
+        </div>
+        <div class="instruction-step">
+          <span class="step-num">2</span>
+          <span>Conecta la cámara del celular al computador vía <strong>DroidCam</strong> (Android) o <strong>Camo</strong> (iOS)</span>
+        </div>
+        <div class="instruction-step">
+          <span class="step-num">3</span>
+          <span>Selecciona la cámara correspondiente y presiona <em>Iniciar</em></span>
+        </div>
+      </div>
+
+      <div class="camera-select-group">
+        <label for="camera-select">Cámara</label>
+        <select id="camera-select">
+          <option value="">Cargando cámaras...</option>
+        </select>
+      </div>
+
+      <button id="btn-start" class="btn-primary" disabled>Iniciar</button>
+      <p id="setup-error" class="error-msg"></p>
+    </div>
+  </div>
+
+  <!-- ── PANTALLA 2: CALIBRACIÓN ────────────────────────────────────── -->
+  <div id="screen-calib" class="screen">
+    <div class="calib-layout">
+
+      <div class="calib-video-wrap">
+        <video id="calib-video" autoplay playsinline muted></video>
+        <canvas id="calib-canvas"></canvas>
+        <div id="calib-crosshair"></div>
+      </div>
+
+      <div class="calib-panel">
+        <h2>Calibración</h2>
+
+        <div class="calib-step" id="calib-step-1">
+          <h3><span class="step-badge">1</span> Color de los granos</h3>
+          <p>Haz clic sobre <strong>varios granos</strong> en la imagen para que la app aprenda su color. Apunta a zonas con buena luz.</p>
+          <div id="color-samples" class="color-samples"></div>
+          <p class="sample-count"><span id="sample-count">0</span> / 5 muestras mínimas</p>
+          <button id="btn-next-step" class="btn-secondary" disabled>Siguiente →</button>
+        </div>
+
+        <div class="calib-step hidden" id="calib-step-2">
+          <h3><span class="step-badge">2</span> Definir el círculo de la Tierra</h3>
+          <p>Haz clic en el <strong>centro</strong> del planeta dibujado en la hoja, luego arrastra hasta el <strong>borde</strong> para definir el radio.</p>
+          <div id="circle-status" class="circle-status">Sin definir</div>
+          <button id="btn-reset-circle" class="btn-ghost">Redefinir círculo</button>
+          <button id="btn-done-calib" class="btn-primary" disabled>Comenzar →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PANTALLA 3: VISTA PRINCIPAL ───────────────────────────────── -->
+  <div id="screen-main" class="screen">
+    <div class="main-layout">
+
+      <!-- Feed de cámara con overlay -->
+      <div class="feed-wrap">
+        <video id="main-video" autoplay playsinline muted></video>
+        <canvas id="main-canvas"></canvas>
+      </div>
+
+      <!-- Panel de información -->
+      <div class="info-panel">
+        <div class="info-top">
+          <div class="year-display">
+            <span class="year-label">AÑO</span>
+            <span id="info-year">—</span>
+          </div>
+          <div class="coverage-display">
+            <span class="coverage-label">COBERTURA</span>
+            <span id="info-coverage">0%</span>
+          </div>
+        </div>
+
+        <div class="satellite-count">
+          <span id="info-total">—</span>
+          <span class="sat-label">satélites en órbita</span>
+        </div>
+
+        <div class="timeline-bar">
+          <div class="timeline-track">
+            <div id="timeline-fill" class="timeline-fill"></div>
+            <div id="timeline-marker" class="timeline-marker"></div>
+          </div>
+          <div class="timeline-labels">
+            <span>1958</span>
+            <span>1980</span>
+            <span>2000</span>
+            <span>2025</span>
+          </div>
+        </div>
+
+        <div class="breakdown">
+          <div class="breakdown-row">
+            <span class="dot gov"></span>
+            <span class="bk-label">Gubernamentales</span>
+            <span id="bk-gov" class="bk-val">—</span>
+          </div>
+          <div class="breakdown-row">
+            <span class="dot gnss"></span>
+            <span class="bk-label">GNSS / Navegación</span>
+            <span id="bk-gnss" class="bk-val">—</span>
+          </div>
+          <div class="breakdown-row">
+            <span class="dot commercial"></span>
+            <span class="bk-label">Comerciales</span>
+            <span id="bk-commercial" class="bk-val">—</span>
+          </div>
+          <div class="breakdown-row">
+            <span class="dot starlink"></span>
+            <span class="bk-label">Starlink</span>
+            <span id="bk-starlink" class="bk-val">—</span>
+          </div>
+        </div>
+
+        <div class="audio-row">
+          <button id="btn-audio" class="btn-audio">▶ Activar sonido</button>
+          <button id="btn-recalib" class="btn-ghost small">Recalibrar</button>
+        </div>
+
+        <p class="source-note">Fuente: CelesTrak SATCAT (abril 2025)</p>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

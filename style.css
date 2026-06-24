@@ -4,6 +4,40 @@
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
+/* ── Barra de navegación entre entregas ── */
+.site-nav {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  padding: 10px 16px 0;
+  width: 100%;
+}
+
+.nav-tab {
+  text-decoration: none;
+  font-size: 11px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: #3a3f5c;
+  padding: 6px 18px;
+  border-radius: 20px 20px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  transition: background .15s, border-color .15s;
+}
+
+.nav-tab:hover {
+  background: #e8eaf3;
+  border-color: #d5d9ea;
+}
+
+.nav-tab.active {
+  background: #fff;
+  border-color: #d5d9ea;
+  color: #2171b5;
+  font-weight: 600;
+}
+
 body {
   background: #f5f6fa;
   display: flex;
