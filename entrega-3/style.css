@@ -354,10 +354,37 @@ select:focus {
 }
 
 .color-swatch {
+  position: relative;
   width: 28px;
   height: 28px;
   border-radius: 50%;
   border: 2px solid rgba(255,255,255,.15);
+  cursor: pointer;
+  transition: border-color .15s;
+}
+
+.color-swatch:hover {
+  border-color: rgba(255,255,255,.7);
+}
+
+.swatch-x {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0,0,0,.55);
+  opacity: 0;
+  transition: opacity .15s;
+  pointer-events: none;
+}
+
+.color-swatch:hover .swatch-x {
+  opacity: 1;
 }
 
 .sample-count {

@@ -208,9 +208,22 @@ function drawCircleOverlay(ctx, circle, W, H) {
 function renderColorSamples() {
   const container = document.getElementById('color-samples');
   const count     = document.getElementById('sample-count');
+
   container.innerHTML = colorSamples
-    .map(({ h, s, l }) => `<div class="color-swatch" style="background:hsl(${h},${s}%,${l}%)"></div>`)
+    .map(({ h, s, l }, i) =>
+      `<div class="color-swatch" style="background:hsl(${h},${s}%,${l}%)" data-i="${i}">
+        <span class="swatch-x">✕</span>
+      </div>`)
     .join('');
+
+  container.querySelectorAll('.color-swatch').forEach(el => {
+    el.addEventListener('click', () => {
+      colorSamples.splice(Number(el.dataset.i), 1);
+      renderColorSamples();
+      document.getElementById('btn-next-step').disabled = colorSamples.length < 5;
+    });
+  });
+
   count.textContent = colorSamples.length;
 }
 
