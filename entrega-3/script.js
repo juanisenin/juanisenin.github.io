@@ -27,9 +27,14 @@ function showScreen(id) {
 // PANTALLA 1 — SETUP
 // ═══════════════════════════════════════════════════════════════════════════════
 async function initSetup() {
-  const sel     = document.getElementById('camera-select');
+  const sel      = document.getElementById('camera-select');
   const btnStart = document.getElementById('btn-start');
-  const errMsg  = document.getElementById('setup-error');
+  const errMsg   = document.getElementById('setup-error');
+
+  // Limpiar listener anterior para evitar duplicados al volver desde main
+  const freshBtn = btnStart.cloneNode(true);
+  btnStart.parentNode.replaceChild(freshBtn, btnStart);
+  const btn = document.getElementById('btn-start');
 
   try {
     // Pedir permiso de cámara para que navigator.mediaDevices.enumerateDevices
@@ -44,13 +49,13 @@ async function initSetup() {
       .map((c, i) => `<option value="${c.deviceId}">${c.label || 'Cámara ' + (i + 1)}</option>`)
       .join('');
 
-    if (cameras.length > 0) btnStart.disabled = false;
+    if (cameras.length > 0) btn.disabled = false;
 
   } catch (e) {
     errMsg.textContent = 'No se pudo acceder a la cámara. Revisa los permisos del navegador.';
   }
 
-  btnStart.addEventListener('click', async () => {
+  btn.addEventListener('click', async () => {
     const deviceId = sel.value;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -331,11 +336,35 @@ function initMain() {
     requestAnimationFrame(mainLoop);
   }
 
-  document.getElementById('btn-recalib').addEventListener('click', () => {
+  function resetToSetup() {
     stopAudio();
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     colorSamples = [];
     earthCircle  = null;
     calStep      = 1;
+    lastAudioPct = -1;
+    document.getElementById('calib-step-1').classList.remove('hidden');
+    document.getElementById('calib-step-2').classList.add('hidden');
+    document.getElementById('btn-next-step').disabled = true;
+    document.getElementById('btn-done-calib').disabled = true;
+    document.getElementById('circle-status').textContent = 'Sin definir';
+    document.getElementById('btn-audio').textContent = '▶ Activar sonido';
+    document.getElementById('btn-audio').classList.remove('active');
+    audioOn = false;
+    renderColorSamples();
+    showScreen('screen-setup');
+    initSetup();
+  }
+
+  document.getElementById('btn-recalib').addEventListener('click', () => {
+    stopAudio();
+    audioOn = false;
+    document.getElementById('btn-audio').textContent = '▶ Activar sonido';
+    document.getElementById('btn-audio').classList.remove('active');
+    colorSamples = [];
+    earthCircle  = null;
+    calStep      = 1;
+    lastAudioPct = -1;
     document.getElementById('calib-step-1').classList.remove('hidden');
     document.getElementById('calib-step-2').classList.add('hidden');
     document.getElementById('btn-next-step').disabled = true;
@@ -345,6 +374,8 @@ function initMain() {
     showScreen('screen-calib');
     initCalib();
   });
+
+  document.getElementById('btn-restart').addEventListener('click', resetToSetup);
 }
 
 // ── Análisis de frame ─────────────────────────────────────────────────────────
