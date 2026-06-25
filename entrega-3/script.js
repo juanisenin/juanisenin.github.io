@@ -16,6 +16,7 @@ let earthCircle   = null; // { cx, cy, r } en coordenadas del canvas de calibrac
 let circleDrawing = false;
 let circleStart   = null;
 let calStep       = 1;
+let calibAC       = null; // AbortController para limpiar listeners de calibración
 
 // ── Pantallas ─────────────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -73,6 +74,11 @@ async function initSetup() {
 // PANTALLA 2 — CALIBRACIÓN
 // ═══════════════════════════════════════════════════════════════════════════════
 function initCalib() {
+  // Cancelar listeners de una calibración previa para evitar duplicados
+  if (calibAC) calibAC.abort();
+  calibAC = new AbortController();
+  const { signal } = calibAC;
+
   const video  = document.getElementById('calib-video');
   const canvas = document.getElementById('calib-canvas');
   const ctx    = canvas.getContext('2d', { willReadFrequently: true });
@@ -80,13 +86,20 @@ function initCalib() {
   video.srcObject = stream;
   video.play();
 
-  video.addEventListener('loadedmetadata', () => {
+  let loopStarted = false;
+  function startLoop() {
+    if (loopStarted || signal.aborted) return;
+    loopStarted = true;
     canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
     requestAnimationFrame(calibFrame);
-  });
+  }
+
+  video.addEventListener('loadedmetadata', startLoop, { signal });
+  if (video.readyState >= 1) startLoop();
 
   function calibFrame() {
+    if (signal.aborted) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     if (earthCircle) drawCircleOverlay(ctx, earthCircle, canvas.width, canvas.height);
     requestAnimationFrame(calibFrame);
@@ -109,37 +122,37 @@ function initCalib() {
     if (colorSamples.length >= 5) {
       document.getElementById('btn-next-step').disabled = false;
     }
-  });
+  }, { signal });
 
   document.getElementById('btn-next-step').addEventListener('click', () => {
     calStep = 2;
     document.getElementById('calib-step-1').classList.add('hidden');
     document.getElementById('calib-step-2').classList.remove('hidden');
-    enableCircleDraw(canvas, ctx);
-  });
+    enableCircleDraw(canvas, ctx, signal);
+  }, { signal });
 
   // ── Paso 2: definir círculo ───────────────────────────────────────────────
   document.getElementById('btn-reset-circle').addEventListener('click', () => {
     earthCircle = null;
     document.getElementById('circle-status').textContent = 'Sin definir';
     document.getElementById('btn-done-calib').disabled = true;
-  });
+  }, { signal });
 
   document.getElementById('btn-done-calib').addEventListener('click', () => {
     showScreen('screen-main');
     initMain();
-  });
+  }, { signal });
 }
 
-function enableCircleDraw(canvas, ctx) {
-  canvas.addEventListener('mousedown', onCircleStart);
-  canvas.addEventListener('mousemove', onCircleMove);
-  canvas.addEventListener('mouseup',   onCircleEnd);
+function enableCircleDraw(canvas, ctx, signal) {
+  canvas.addEventListener('mousedown', onCircleStart, { signal });
+  canvas.addEventListener('mousemove', onCircleMove,  { signal });
+  canvas.addEventListener('mouseup',   onCircleEnd,   { signal });
 
   // Touch
-  canvas.addEventListener('touchstart', e => { e.preventDefault(); onCircleStart(touchToMouse(e, canvas)); }, { passive: false });
-  canvas.addEventListener('touchmove',  e => { e.preventDefault(); onCircleMove(touchToMouse(e, canvas));  }, { passive: false });
-  canvas.addEventListener('touchend',   e => { e.preventDefault(); onCircleEnd(touchToMouse(e, canvas));   }, { passive: false });
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); onCircleStart(touchToMouse(e, canvas)); }, { passive: false, signal });
+  canvas.addEventListener('touchmove',  e => { e.preventDefault(); onCircleMove(touchToMouse(e, canvas));  }, { passive: false, signal });
+  canvas.addEventListener('touchend',   e => { e.preventDefault(); onCircleEnd(touchToMouse(e, canvas));   }, { passive: false, signal });
 
   function toCanvas(e) {
     const rect   = canvas.getBoundingClientRect();

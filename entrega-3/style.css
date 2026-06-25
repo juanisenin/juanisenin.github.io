@@ -268,8 +268,7 @@ select:focus {
   overflow: hidden;
 }
 
-.calib-video-wrap video,
-.calib-video-wrap canvas {
+.calib-video-wrap video {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -278,6 +277,10 @@ select:focus {
 }
 
 .calib-video-wrap canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   cursor: crosshair;
 }
 
@@ -419,13 +422,19 @@ select:focus {
   overflow: hidden;
 }
 
-.feed-wrap video,
-.feed-wrap canvas {
+.feed-wrap video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.feed-wrap canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 /* ── Panel info ── */
