@@ -287,7 +287,11 @@ function matchesGrain(h, s, l, range) {
 // ── Mapeo cobertura → año ─────────────────────────────────────────────────────
 function coverageToYearData(coveragePct) {
   if (SAT_DATA.length === 0) return null;
-  const targetCount = (coveragePct / 100) * MAX_TOTAL;
+  // 80% o más → año más reciente (2025)
+  if (coveragePct >= 80) return SAT_DATA[SAT_DATA.length - 1];
+  // Escalar para que 80% equivalga al 100% del rango de datos
+  const scaledPct = (coveragePct / 80) * 100;
+  const targetCount = (scaledPct / 100) * MAX_TOTAL;
   let best = SAT_DATA[0];
   let bestDiff = Math.abs(best.total - targetCount);
   for (const d of SAT_DATA) {
@@ -435,21 +439,10 @@ function drawMainOverlay(ctx, W, H, coverage) {
   }
   ctx.restore();
 
-  // Indicador de cobertura en el centro
-  const pct = Math.round(coverage * 100);
-  ctx.save();
-  ctx.font = `bold ${Math.round(r * 0.22)}px 'Segoe UI', system-ui, sans-serif`;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle    = 'rgba(255,255,255,0.85)';
-  ctx.fillText(`${pct}%`, cx, cy);
-  ctx.restore();
 }
 
 // ── Panel de información ──────────────────────────────────────────────────────
 function updateInfoPanel(pct, d) {
-  document.getElementById('info-coverage').textContent = pct + '%';
-
   if (!d) return;
 
   document.getElementById('info-year').textContent    = d.year;

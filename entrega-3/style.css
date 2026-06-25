@@ -469,26 +469,6 @@ select:focus {
   transition: color .3s;
 }
 
-.coverage-display {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-}
-
-.coverage-label {
-  font-size: 10px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-#info-coverage {
-  font-size: 26px;
-  font-weight: 600;
-  color: var(--accent);
-  transition: color .3s;
-}
 
 .satellite-count {
   display: flex;
@@ -637,6 +617,3 @@ select:focus {
   color: var(--sl);
 }
 
-.starlink-era #info-coverage {
-  color: var(--sl);
-}
