@@ -275,15 +275,29 @@ function avgPixelHSL(data) {
   return rgbToHsl(rSum / count, gSum / count, bSum / count);
 }
 
+// Tolerancias del rango de color. Más ajustadas que antes para no abarcar
+// sombras ni el fondo de la hoja.
+const H_PAD   = 14;   // padding de tono
+const S_PAD   = 16;   // padding de saturación
+const L_PAD   = 14;   // padding de luminosidad
+// Pisos/topes absolutos: las sombras son oscuras y poco saturadas (grises),
+// así que exigimos un mínimo de saturación y de luz para descartarlas.
+const S_FLOOR = 25;   // saturación mínima — descarta grises/sombras del fondo
+const L_FLOOR = 22;   // luminosidad mínima — descarta zonas muy oscuras (sombras)
+const L_CEIL  = 96;   // luminosidad máxima — descarta brillos/reflejos
+
 function getColorRange() {
   if (colorSamples.length === 0) return null;
   const hues = colorSamples.map(c => c.h);
   const sats = colorSamples.map(c => c.s);
   const lums = colorSamples.map(c => c.l);
   return {
-    hMin: Math.min(...hues) - 18, hMax: Math.max(...hues) + 18,
-    sMin: Math.min(...sats) - 22, sMax: Math.max(...sats) + 22,
-    lMin: Math.min(...lums) - 22, lMax: Math.max(...lums) + 22,
+    hMin: Math.min(...hues) - H_PAD,
+    hMax: Math.max(...hues) + H_PAD,
+    sMin: Math.max(Math.min(...sats) - S_PAD, S_FLOOR),
+    sMax: Math.min(Math.max(...sats) + S_PAD, 100),
+    lMin: Math.max(Math.min(...lums) - L_PAD, L_FLOOR),
+    lMax: Math.min(Math.max(...lums) + L_PAD, L_CEIL),
   };
 }
 
@@ -315,6 +329,341 @@ function coverageToYearData(coveragePct) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZACIÓN EMBEBIDA (gráfico + globo + leyenda de la Entrega 2)
+// Controlada por visión por computador: el gráfico se revela solo hasta el año
+// que representan las lentejas, y el globo muestra los satélites de ese año.
+// ═══════════════════════════════════════════════════════════════════════════════
+const VIZ_LEGEND = [
+  { key: 'gov',        label: 'Gubernamentales / científicos', color: '#2171b5', shape: 'circle'   },
+  { key: 'gnss',       label: 'GNSS / Navegación',             color: '#2aaa58', shape: 'diamond'  },
+  { key: 'commercial', label: 'Constelaciones comerciales',    color: '#9b59b6', shape: 'triangle' },
+  { key: 'starlink',   label: 'Starlink',                      color: '#e05c2a', shape: 'cross'    },
+];
+
+const vizActive        = new Set(['gov', 'gnss', 'commercial', 'starlink']);
+let   vizState         = null;   // { revealTo, updateAreasLine } expuesto por el gráfico
+let   vizEarthStarted  = false;  // el loop del globo arranca una sola vez
+let   currentVizYearData = null;
+
+function vizEarthData(d) {
+  const f = {
+    gov:        vizActive.has('gov')        ? d.gov        : 0,
+    gnss:       vizActive.has('gnss')       ? d.gnss       : 0,
+    commercial: vizActive.has('commercial') ? d.commercial : 0,
+    starlink:   vizActive.has('starlink')   ? d.starlink   : 0,
+  };
+  f.total = f.gov + f.gnss + f.commercial + f.starlink;
+  return f;
+}
+
+function initViz(data) {
+  if (!data || !data.length || typeof d3 === 'undefined') return;
+  buildVizChart(data);
+  buildVizLegend();
+  if (!vizEarthStarted) { initVizEarth(); vizEarthStarted = true; }
+  if (currentVizYearData) vizSetYear(currentVizYearData);
+}
+
+// Llamada desde commit(): actualiza gráfico + globo al año detectado.
+function vizSetYear(yearData) {
+  if (!yearData) return;
+  currentVizYearData = yearData;
+  const inline = document.getElementById('viz-year-inline');
+  if (inline) inline.textContent = yearData.year;
+  if (vizState) vizState.revealTo(yearData.year);
+  updateVizEarthDots(vizEarthData(yearData));
+}
+
+// ── Gráfico de áreas/línea con revelado por año ───────────────────────────────
+function buildVizChart(data) {
+  const margin = { top: 16, right: 24, bottom: 48, left: 56 };
+  const el = document.getElementById('chart');
+  const W  = el.clientWidth || 600;
+  const H  = Math.round(W * 0.58);
+  const w  = W - margin.left - margin.right;
+  const h  = H - margin.top  - margin.bottom;
+
+  d3.select('#chart').selectAll('*').remove();
+
+  const svg = d3.select('#chart').attr('viewBox', `0 0 ${W} ${H}`).attr('height', H);
+  const g   = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear().domain(d3.extent(data, d => d.year)).range([0, w]);
+  const y = d3.scaleLinear().domain([0, d3.max(data, d => d.total) * 1.05]).range([h, 0]);
+
+  g.append('g').attr('class', 'grid')
+    .call(d3.axisLeft(y).ticks(6).tickSize(-w).tickFormat(''));
+
+  // Clip controlado por el año: revela el gráfico de izquierda a derecha.
+  const clip = g.append('clipPath').attr('id', 'viz-reveal-clip').append('rect')
+    .attr('x', 0).attr('y', 0).attr('height', h).attr('width', 0);
+
+  const ORDER = ['gov', 'gnss', 'commercial', 'starlink'];
+  const curve = d3.curveCatmullRom;
+
+  const defs = svg.append('defs');
+  const gradSpecs = [
+    { id: 'viz-grad-gov',  color: '#2171b5', topOp: 0.55, botOp: 0.06 },
+    { id: 'viz-grad-gnss', color: '#2aaa58', topOp: 0.60, botOp: 0.07 },
+    { id: 'viz-grad-comm', color: '#9b59b6', topOp: 0.60, botOp: 0.07 },
+    { id: 'viz-grad-sl',   color: '#e05c2a', topOp: 0.65, botOp: 0.07 },
+  ];
+  gradSpecs.forEach(({ id, color, topOp, botOp }) => {
+    const grad = defs.append('linearGradient').attr('id', id)
+      .attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 1)
+      .attr('gradientUnits', 'objectBoundingBox');
+    grad.append('stop').attr('offset',   '0%').attr('stop-color', color).attr('stop-opacity', topOp);
+    grad.append('stop').attr('offset', '100%').attr('stop-color', color).attr('stop-opacity', botOp);
+  });
+  const gradIds = { gov: 'viz-grad-gov', gnss: 'viz-grad-gnss', commercial: 'viz-grad-comm', starlink: 'viz-grad-sl' };
+
+  function makeAreaFn(type) {
+    return d3.area().x(d => x(d.year))
+      .y0(d => { let cum = 0; for (const t of ORDER) { if (t === type) break; if (vizActive.has(t)) cum += d[t]; } return y(cum); })
+      .y1(d => { let cum = 0; for (const t of ORDER) { if (t === type) break; if (vizActive.has(t)) cum += d[t]; } if (vizActive.has(type)) cum += d[type]; return y(cum); })
+      .curve(curve);
+  }
+  function makeLineFn() {
+    return d3.line().x(d => x(d.year))
+      .y(d => { let t = 0; ORDER.forEach(k => { if (vizActive.has(k)) t += d[k]; }); return y(t); })
+      .curve(curve);
+  }
+
+  const areaPaths = {};
+  ORDER.forEach(type => {
+    areaPaths[type] = g.append('path').datum(data)
+      .attr('d', makeAreaFn(type)(data))
+      .attr('fill', `url(#${gradIds[type]})`)
+      .attr('clip-path', 'url(#viz-reveal-clip)');
+  });
+
+  const linePath = g.append('path').datum(data)
+    .attr('class', 'line')
+    .attr('d', makeLineFn()(data))
+    .attr('clip-path', 'url(#viz-reveal-clip)');
+
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${h})`)
+    .call(d3.axisBottom(x).tickFormat(d3.format('d')).ticks(10));
+  g.append('g').attr('class', 'axis')
+    .call(d3.axisLeft(y).ticks(6).tickFormat(d => d >= 1000 ? d / 1000 + 'k' : d));
+
+  g.append('text').attr('class', 'axis-label').attr('text-anchor', 'middle')
+    .attr('x', w / 2).attr('y', h + 40).text('AÑO');
+  g.append('text').attr('class', 'axis-label').attr('text-anchor', 'middle')
+    .attr('transform', `translate(-42, ${h / 2}) rotate(-90)`).text('SATÉLITES');
+
+  // Marcador del año actual.
+  const cursor    = g.append('line').attr('class', 'viz-cursor').attr('y1', 0).attr('y2', h).style('opacity', 0);
+  const cursorDot = g.append('circle').attr('class', 'viz-cursor-dot').attr('r', 5).style('opacity', 0);
+
+  const minYear = data[0].year;
+
+  function updateAreasLine() {
+    ORDER.forEach(type => {
+      areaPaths[type].attr('display', vizActive.has(type) ? null : 'none')
+        .transition().duration(300).ease(d3.easeCubicInOut).attr('d', makeAreaFn(type)(data));
+    });
+    linePath.transition().duration(300).ease(d3.easeCubicInOut).attr('d', makeLineFn()(data));
+  }
+
+  function revealTo(year) {
+    const px  = Math.max(0, x(year));
+    const d   = data.find(r => r.year === year) || data[data.length - 1];
+    const tot = vizEarthData(d).total;
+    const show = year > minYear ? 1 : 0;
+
+    clip.transition().duration(450).ease(d3.easeCubicOut).attr('width', px);
+    cursor.style('opacity', show).transition().duration(450).ease(d3.easeCubicOut)
+      .attr('x1', px).attr('x2', px);
+    cursorDot.style('opacity', show).transition().duration(450).ease(d3.easeCubicOut)
+      .attr('cx', px).attr('cy', y(tot));
+  }
+
+  vizState = { revealTo, updateAreasLine };
+}
+
+// ── Leyenda interactiva (toggle de categorías) ────────────────────────────────
+function buildVizLegend() {
+  const container = document.getElementById('legend');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const SHAPE_SVG = {
+    circle:   c => `<circle cx="7" cy="7" r="6" fill="${c}"/>`,
+    diamond:  c => `<polygon points="7,0 14,7 7,14 0,7" fill="${c}"/>`,
+    triangle: c => `<polygon points="7,1 14,13 0,13" fill="${c}"/>`,
+    cross:    c => `<rect x="0" y="5" width="14" height="4" fill="${c}"/><rect x="5" y="0" width="4" height="14" fill="${c}"/>`,
+  };
+
+  VIZ_LEGEND.forEach(({ key, label, color, shape }) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item' + (vizActive.has(key) ? '' : ' inactive');
+    item.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14">${SHAPE_SVG[shape](color)}</svg><span>${label}</span>`;
+    item.addEventListener('click', () => {
+      if (vizActive.has(key)) {
+        if (vizActive.size === 1) return;       // siempre al menos una categoría
+        vizActive.delete(key); item.classList.add('inactive');
+      } else {
+        vizActive.add(key); item.classList.remove('inactive');
+      }
+      if (vizState) vizState.updateAreasLine();
+      if (currentVizYearData) {
+        if (vizState) vizState.revealTo(currentVizYearData.year);
+        updateVizEarthDots(vizEarthData(currentVizYearData));
+        updateSound(currentVizYearData);
+      }
+    });
+    container.appendChild(item);
+  });
+}
+
+// ── Globo terráqueo con satélites orbitando ───────────────────────────────────
+const EARTH_R    = 96;
+const EARTH_SIZE = 340;
+
+const MAX_GOV  = 5584;
+const MAX_GNSS = 321;
+const MAX_COMM = 1215;
+const MAX_SL   = 6770;
+const MAX_DOTS = MAX_GOV + MAX_GNSS + MAX_COMM + MAX_SL;
+
+const GNSS_OFF = MAX_GOV;
+const COMM_OFF = MAX_GOV + MAX_GNSS;
+const SL_OFF   = MAX_GOV + MAX_GNSS + MAX_COMM;
+
+const VIEW_RX = -0.38, VIEW_RY = 0.22;
+const COS_RX = Math.cos(VIEW_RX), SIN_RX = Math.sin(VIEW_RX);
+const COS_RY = Math.cos(VIEW_RY), SIN_RY = Math.sin(VIEW_RY);
+
+const GOV_COLOR = [33, 113, 181], GNSS_COLOR = [42, 170, 88];
+const COMMERCIAL_COLOR = [155, 89, 182], STARLINK_COLOR = [224, 92, 42];
+
+function vizSrand(s) { const v = Math.sin(s + 1) * 10000; return v - Math.floor(v); }
+
+const vizSatellites = Array.from({ length: MAX_DOTS }, (_, i) => ({
+  lat:    Math.acos(2 * vizSrand(i * 7) - 1) - Math.PI / 2,
+  lon:    vizSrand(i * 7 + 1) * Math.PI * 2,
+  omega:  (vizSrand(i * 11) * 0.12 + 0.02) * (i % 2 ? 1 : -1),
+  radius: EARTH_R * (1.30 + vizSrand(i * 13) * 0.38),
+}));
+
+let activeGov = 0, activeGnss = 0, activeCommercial = 0, activeStarlink = 0;
+
+function updateVizEarthDots(d) {
+  activeGov        = d.gov;
+  activeGnss       = d.gnss;
+  activeCommercial = d.commercial;
+  activeStarlink   = d.starlink;
+}
+
+function vizProject(lat, lon, r, cx, cy) {
+  const x0 = r * Math.cos(lat) * Math.cos(lon);
+  const y0 = r * Math.sin(lat);
+  const z0 = r * Math.cos(lat) * Math.sin(lon);
+  const y1 = y0 * COS_RX - z0 * SIN_RX;
+  const z1 = y0 * SIN_RX + z0 * COS_RX;
+  const x2 = x0 * COS_RY + z1 * SIN_RY;
+  const z2 = -x0 * SIN_RY + z1 * COS_RY;
+  return { sx: cx + x2, sy: cy - y1, depth: z2 };
+}
+
+function initVizEarth() {
+  const canvas = document.getElementById('earth');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = EARTH_SIZE * dpr;
+  canvas.height = EARTH_SIZE * dpr;
+  canvas.style.width  = EARTH_SIZE + 'px';
+  canvas.style.height = EARTH_SIZE + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const cx = EARTH_SIZE / 2, cy = EARTH_SIZE / 2;
+  const STEPS = 64;
+
+  (function frame() {
+    ctx.clearRect(0, 0, EARTH_SIZE, EARTH_SIZE);
+    const t    = performance.now() / 1000;
+    const gRot = t * 0.12;
+
+    const projSat  = s => vizProject(s.lat, s.lon + s.omega * t, s.radius, cx, cy);
+    const govDots  = vizSatellites.slice(0,        activeGov)                   .map(s => ({ ...projSat(s), cat: 0 }));
+    const gnssDots = vizSatellites.slice(GNSS_OFF, GNSS_OFF + activeGnss)       .map(s => ({ ...projSat(s), cat: 1 }));
+    const commDots = vizSatellites.slice(COMM_OFF, COMM_OFF + activeCommercial) .map(s => ({ ...projSat(s), cat: 2 }));
+    const slDots   = vizSatellites.slice(SL_OFF,   SL_OFF   + activeStarlink)   .map(s => ({ ...projSat(s), cat: 3 }));
+    const dots     = [...govDots, ...gnssDots, ...commDots, ...slDots];
+
+    const behind = dots.filter(d => d.depth < 0);
+    const front  = dots.filter(d => d.depth >= 0);
+
+    function drawCircles(list, r, style) {
+      ctx.beginPath();
+      list.forEach(d => { ctx.moveTo(d.sx + r, d.sy); ctx.arc(d.sx, d.sy, r, 0, Math.PI * 2); });
+      ctx.fillStyle = style; ctx.fill();
+    }
+    function drawDiamonds(list, style) {
+      ctx.beginPath();
+      list.forEach(d => { ctx.moveTo(d.sx, d.sy - 2.4); ctx.lineTo(d.sx + 2.4, d.sy); ctx.lineTo(d.sx, d.sy + 2.4); ctx.lineTo(d.sx - 2.4, d.sy); ctx.closePath(); });
+      ctx.fillStyle = style; ctx.fill();
+    }
+    function drawTriangles(list, style) {
+      ctx.beginPath();
+      list.forEach(d => { ctx.moveTo(d.sx, d.sy - 2.5); ctx.lineTo(d.sx + 2.2, d.sy + 1.6); ctx.lineTo(d.sx - 2.2, d.sy + 1.6); ctx.closePath(); });
+      ctx.fillStyle = style; ctx.fill();
+    }
+    function drawCrosses(list, style) {
+      ctx.fillStyle = style;
+      list.forEach(d => { ctx.fillRect(d.sx - 2.2, d.sy - 0.55, 4.4, 1.1); ctx.fillRect(d.sx - 0.55, d.sy - 2.2, 1.1, 4.4); });
+    }
+
+    const [gr, gg, gb] = GOV_COLOR, [nr, ng, nb] = GNSS_COLOR, [cr, cg, cb] = COMMERCIAL_COLOR, [sr, sg, sb] = STARLINK_COLOR;
+
+    drawCircles  (behind.filter(d => d.cat === 0), 0.9, `rgba(${gr},${gg},${gb},0.25)`);
+    drawDiamonds (behind.filter(d => d.cat === 1),      `rgba(${nr},${ng},${nb},0.25)`);
+    drawTriangles(behind.filter(d => d.cat === 2),      `rgba(${cr},${cg},${cb},0.25)`);
+    drawCrosses  (behind.filter(d => d.cat === 3),      `rgba(${sr},${sg},${sb},0.25)`);
+
+    ctx.beginPath(); ctx.arc(cx, cy, EARTH_R, 0, Math.PI * 2); ctx.fillStyle = '#f5f6fa'; ctx.fill();
+
+    ctx.lineWidth = 0.65; ctx.strokeStyle = 'rgba(58,63,92,0.55)';
+    for (let latDeg = -75; latDeg <= 75; latDeg += 15) {
+      const lat = latDeg * Math.PI / 180;
+      ctx.beginPath(); let pen = false;
+      for (let i = 0; i <= STEPS; i++) {
+        const p = vizProject(lat, (i / STEPS) * Math.PI * 2 + gRot, EARTH_R, cx, cy);
+        if (p.depth >= 0) { pen ? ctx.lineTo(p.sx, p.sy) : ctx.moveTo(p.sx, p.sy); pen = true; } else pen = false;
+      }
+      ctx.stroke();
+    }
+    for (let lonDeg = 0; lonDeg < 360; lonDeg += 15) {
+      const lon = lonDeg * Math.PI / 180 + gRot;
+      ctx.beginPath(); let pen = false;
+      for (let i = 0; i <= STEPS; i++) {
+        const p = vizProject(-Math.PI / 2 + (i / STEPS) * Math.PI, lon, EARTH_R, cx, cy);
+        if (p.depth >= 0) { pen ? ctx.lineTo(p.sx, p.sy) : ctx.moveTo(p.sx, p.sy); pen = true; } else pen = false;
+      }
+      ctx.stroke();
+    }
+
+    ctx.beginPath(); ctx.arc(cx, cy, EARTH_R, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(58,63,92,0.85)'; ctx.lineWidth = 1.4; ctx.stroke();
+
+    drawCircles  (front.filter(d => d.cat === 0), 1.1, `rgba(${gr},${gg},${gb},0.88)`);
+    drawDiamonds (front.filter(d => d.cat === 1),      `rgba(${nr},${ng},${nb},0.88)`);
+    drawTriangles(front.filter(d => d.cat === 2),      `rgba(${cr},${cg},${cb},0.88)`);
+    drawCrosses  (front.filter(d => d.cat === 3),      `rgba(${sr},${sg},${sb},0.88)`);
+
+    if (activeGov >= 1) {
+      const sp = govDots[0];
+      ctx.beginPath(); ctx.arc(sp.sx, sp.sy, 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = `rgb(${gr},${gg},${gb})`; ctx.fill();
+    }
+
+    requestAnimationFrame(frame);
+  })();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PANTALLA 3 — VISTA PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════════════════
 function initMain() {
@@ -331,23 +680,87 @@ function initMain() {
     requestAnimationFrame(mainLoop);
   });
 
+  // Visualización de la Entrega 2 embebida (gráfico + globo + leyenda).
+  if (SAT_DATA.length) {
+    initViz(SAT_DATA);
+  } else {
+    fetch('data.json').then(r => r.json()).then(d => { SAT_DATA = d; initViz(d); }).catch(() => {});
+  }
+
   const colorRange = getColorRange();
   let   lastYear   = null;
-  let   prevCov    = 0;
+
+  // ── Estabilización temporal de la cobertura ────────────────────────────────
+  // La cobertura cruda (% de píxeles del color) tiembla por ruido de cámara,
+  // sombras y autoexposición. Para que el año solo cambie cuando realmente
+  // cambia la cantidad de granos, suavizamos y exigimos que el nuevo valor se
+  // sostenga antes de comprometerlo.
+  const COV_WINDOW    = 15;   // frames para la mediana (descarta picos puntuales)
+  const COV_EMA       = 0.15; // factor de suavizado exponencial (0–1, menor = más suave)
+  const DEADBAND_PCT  = 2;    // cambio mínimo de % para considerar que se movió un grano
+  const STABLE_FRAMES = 18;   // frames que el nuevo valor debe sostenerse antes de aplicar
+  const CANDIDATE_TOL = 1;    // tolerancia de % para considerar "el mismo" candidato
+  const COV_FLOOR     = 0.03; // piso de ruido: por debajo de este % se asume "sin granos"
+
+  let covBuffer    = [];      // ventana de coberturas crudas
+  let covSmooth    = null;    // valor suavizado (EMA sobre la mediana)
+  let committedPct = null;    // % actualmente mostrado en pantalla
+  let candidatePct = null;    // % candidato esperando confirmación
+  let candidateRun = 0;       // frames que el candidato lleva estable
+
+  function commit(pct) {
+    committedPct = pct;
+    candidatePct = pct;
+    candidateRun = 0;
+    const yearData = coverageToYearData(pct);
+    updateInfoPanel(pct, yearData);
+    updateSound(yearData);
+    vizSetYear(yearData);
+    currentPct      = pct;
+    currentYearData = yearData;
+    currentLastYear = lastYear;
+    if (yearData) lastYear = yearData.year;
+  }
 
   function mainLoop() {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     const coverage = analyzeFrame(ctx, canvas.width, canvas.height, colorRange);
-    drawMainOverlay(ctx, canvas.width, canvas.height, coverage);
 
-    const pct = Math.round(coverage * 100);
-    if (Math.abs(pct - Math.round(prevCov * 100)) >= 1) {
-      const yearData = coverageToYearData(pct);
-      updateInfoPanel(pct, yearData);
-      updateAudio(pct, yearData, lastYear);
-      if (yearData) lastYear = yearData.year;
-      prevCov = coverage;
+    // 1) Mediana de una ventana corta — elimina spikes de un frame.
+    covBuffer.push(coverage);
+    if (covBuffer.length > COV_WINDOW) covBuffer.shift();
+    const sorted = [...covBuffer].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+
+    // 2) Suavizado exponencial sobre la mediana — quita el jitter residual.
+    covSmooth = covSmooth === null ? median : covSmooth + COV_EMA * (median - covSmooth);
+
+    drawMainOverlay(ctx, canvas.width, canvas.height, covSmooth);
+
+    // 3) Piso de ruido: descontamos la cobertura residual (sombras, ruido) y
+    //    reescalamos, de modo que "sin granos" caiga a 0 (año 1958) y justo por
+    //    encima del piso arranque suave en vez de saltar de golpe.
+    const covEff = covSmooth <= COV_FLOOR ? 0 : (covSmooth - COV_FLOOR) / (1 - COV_FLOOR);
+    const pct    = Math.round(covEff * 100);
+
+    // 4) Histéresis + debounce: solo cambiamos el año cuando el valor suavizado
+    //    se aparta del actual (zona muerta) Y se sostiene varios frames seguidos.
+    if (committedPct === null) {
+      commit(pct);
+    } else if (Math.abs(pct - committedPct) >= DEADBAND_PCT) {
+      if (candidatePct !== null && Math.abs(pct - candidatePct) <= CANDIDATE_TOL) {
+        candidateRun++;
+      } else {
+        candidatePct = pct;
+        candidateRun = 1;
+      }
+      if (candidateRun >= STABLE_FRAMES) commit(candidatePct);
+    } else {
+      // Dentro de la zona muerta: el valor sigue siendo el actual, descartamos
+      // cualquier candidato a medio confirmar.
+      candidatePct = committedPct;
+      candidateRun = 0;
     }
 
     requestAnimationFrame(mainLoop);
@@ -480,192 +893,264 @@ function updateInfoPanel(pct, d) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SONIFICACIÓN  (distinta a entrega 2)
-// ─────────────────────────────────────────────────────────────────────────────
-// Entrega 2 usó: beeps periódicos por categoría + ruido filtrado + música MP3
-// Entrega 3 usa: drone polifónico que evoluciona por era + crackle de radio
-//               + sonidos de evento (lanzamiento / re-entrada)
+// SONIFICACIÓN — sistema portado de la Entrega 2
+// Beeps por categoría (Sonido_Satelite.mp3) cuyo ritmo sube con la cantidad de
+// satélites, música ambiente (Sonido_Ambiente.mp3) y un modo de ruido sintético.
+// Aquí lo controla el año que sale de la visión por computador (no el mouse).
 // ═══════════════════════════════════════════════════════════════════════════════
-let audioCtx      = null;
-let audioOn       = false;
+let audioCtx = null;
+let audioOn  = false;
 
-// Nodos persistentes
-let droneGain     = null;
-let crackleGain   = null;
-let droneOscs     = [];   // 3 osciladores para el drone
-let crackleNode   = null;
-let crackleFilter = null;
-let lfoNode       = null;
-let lfoGain       = null;
+// Último estado comprometido (para re-sincronizar el audio al activarlo).
+let currentPct      = 0;
+let currentYearData = null;
+let currentLastYear = null;
+let lastAudioPct    = -1;   // usado por los handlers de recalibrar / volver
 
-// Valores actuales para evitar actualizaciones redundantes
-let lastAudioPct  = -1;
+// Buffers de audio (MP3).
+let satBuffer     = null;
+let ambientBuffer = null;
+let _audioStarted = false;
+
+// Ambiente (música de fondo en loop).
+let ambientGain    = null;
+let _ambSrc        = null;
+let ambientStarted = false;
+let ambientEnabled = true;
+
+// Modo de sonido: 'beeps' (por defecto) | 'noise' (ruido sintético filtrado).
+let soundMode  = 'beeps';
+let noiseNode  = null;
+let filterNode = null;
+let noiseGain  = null;
+
+const SND_MIN_INTERVAL = 80;
+const SND_MAX_INTERVAL = 2200;
+
+// Una pista por categoría — distinto pitch para diferenciarlas al oído.
+const SOUND_TYPES = {
+  gov:        { pitch: 0.45, pitchVar: 0.04 },
+  gnss:       { pitch: 0.85, pitchVar: 0.04 },
+  commercial: { pitch: 1.45, pitchVar: 0.04 },
+  starlink:   { pitch: 2.30, pitchVar: 0.04 },
+};
+const soundState = Object.fromEntries(
+  Object.keys(SOUND_TYPES).map(k => [k, { timer: null, source: null, gain: null }])
+);
 
 function initAudio() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  // ── Drone: 3 osciladores en acorde ────────────────────────────────────────
-  droneGain = audioCtx.createGain();
-  droneGain.gain.value = 0;
-  droneGain.connect(audioCtx.destination);
-
-  // LFO suave para vibrato / movimiento orbital
-  lfoNode = audioCtx.createOscillator();
-  lfoNode.type = 'sine';
-  lfoNode.frequency.value = 0.18;
-  lfoGain = audioCtx.createGain();
-  lfoGain.gain.value = 3;
-  lfoNode.connect(lfoGain);
-  lfoNode.start();
-
-  const oscTypes = ['sine', 'triangle', 'sine'];
-  const oscDetunes = [0, 7, -5];   // semitones de detune para crear armonía
-  for (let i = 0; i < 3; i++) {
-    const osc  = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = oscTypes[i];
-    osc.detune.value = oscDetunes[i] * 100;
-    gain.gain.value  = i === 0 ? 0.5 : 0.25;
-    lfoGain.connect(osc.frequency);
-    osc.connect(gain);
-    gain.connect(droneGain);
-    osc.start();
-    droneOscs.push({ osc, gain });
-  }
-
-  // ── Crackle de radio: ruido blanco + filtro paso-banda ───────────────────
-  const bufSize  = 4096;
-  crackleNode    = audioCtx.createScriptProcessor(bufSize, 1, 1);
-  crackleNode.onaudioprocess = e => {
-    const out = e.outputBuffer.getChannelData(0);
-    for (let i = 0; i < bufSize; i++) {
-      // Ruido con ráfagas esporádicas (crackle)
-      out[i] = (Math.random() < 0.03)
-        ? (Math.random() * 2 - 1) * 1.2
-        : (Math.random() * 2 - 1) * 0.15;
+  if (_audioStarted) return Promise.resolve();
+  _audioStarted = true;
+  return (async () => {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const [sa, aa] = await Promise.all([
+        fetch('Sonido_Satelite.mp3').then(r => r.arrayBuffer()),
+        fetch('Sonido_Ambiente.mp3').then(r => r.arrayBuffer()),
+      ]);
+      [satBuffer, ambientBuffer] = await Promise.all([
+        audioCtx.decodeAudioData(sa),
+        audioCtx.decodeAudioData(aa),
+      ]);
+    } catch (e) {
+      console.error('Error al iniciar audio:', e);
+      _audioStarted = false;
     }
+  })();
+}
+
+function startAmbient() {
+  if (ambientStarted || !ambientEnabled || !audioCtx) return;
+  ambientStarted = true;
+  if (ambientBuffer) {
+    ambientGain = audioCtx.createGain();
+    ambientGain.gain.value = 0.75;
+    ambientGain.connect(audioCtx.destination);
+    _ambSrc = audioCtx.createBufferSource();
+    _ambSrc.buffer = ambientBuffer;
+    _ambSrc.loop = true;
+    _ambSrc.connect(ambientGain);
+    _ambSrc.start();
+  }
+  if (soundMode === 'noise') createNoise();
+}
+
+function stopAmbient() {
+  try { if (_ambSrc) _ambSrc.stop(); } catch (_) {}
+  _ambSrc = null;
+  ambientGain = null;
+  ambientStarted = false;
+}
+
+function createNoise() {
+  if (noiseNode || !audioCtx) return;
+  const bufferSize = 4096;
+  noiseNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+  noiseNode.onaudioprocess = e => {
+    const out = e.outputBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) out[i] = Math.random() * 2 - 1;
   };
-
-  crackleFilter = audioCtx.createBiquadFilter();
-  crackleFilter.type      = 'bandpass';
-  crackleFilter.frequency.value = 1200;
-  crackleFilter.Q.value   = 1.2;
-
-  crackleGain = audioCtx.createGain();
-  crackleGain.gain.value  = 0;
-
-  crackleNode.connect(crackleFilter);
-  crackleFilter.connect(crackleGain);
-  crackleGain.connect(audioCtx.destination);
+  filterNode = audioCtx.createBiquadFilter();
+  filterNode.type = 'lowpass';
+  filterNode.frequency.value = 200;
+  filterNode.Q.value = 1;
+  noiseGain = audioCtx.createGain();
+  noiseGain.gain.value = 0.1;
+  noiseNode.connect(filterNode);
+  filterNode.connect(noiseGain);
+  noiseGain.connect(audioCtx.destination);
 }
 
-// Frecuencias base del drone por era
-function droneFreqForYear(year) {
-  if (year <= 1969) return 80;    // era espacial temprana — tono grave y solitario
-  if (year <= 1990) return 100;
-  if (year <= 2010) return 130;
-  if (year <= 2018) return 160;
-  return 200;                     // era Starlink — más tenso
+function destroyNoise() {
+  [noiseNode, filterNode, noiseGain].forEach(n => { if (n) { try { n.disconnect(); } catch (_) {} } });
+  noiseNode = filterNode = noiseGain = null;
 }
 
-// Tipo de acorde por era (detune en cents del segundo y tercer oscilador)
-function droneDetuneForYear(year) {
-  if (year <= 1990) return [700, -500];   // quinta + cuarta — consonante
-  if (year <= 2015) return [500, -300];   // algo de tensión
-  return [300, 100];                      // disonante, claustrofóbico
-}
-
-function updateAudio(pct, yearData, prevYear) {
-  if (!audioOn || !audioCtx) return;
-  if (pct === lastAudioPct) return;
-  lastAudioPct = pct;
-
-  const t    = audioCtx.currentTime;
-  const frac = pct / 100;
-  const year = yearData ? yearData.year : YEAR_MIN;
-
-  // ── Drone ──────────────────────────────────────────────────────────────────
-  const baseFreq   = droneFreqForYear(year);
-  const detuneVals = droneDetuneForYear(year);
-  const droneVol   = 0.08 + frac * 0.28;  // sube con la cobertura
-
-  droneGain.gain.linearRampToValueAtTime(droneVol, t + 0.6);
-  droneOscs[0].osc.frequency.linearRampToValueAtTime(baseFreq,              t + 1.2);
-  droneOscs[1].osc.frequency.linearRampToValueAtTime(baseFreq * 1.5,        t + 1.2);
-  droneOscs[2].osc.frequency.linearRampToValueAtTime(baseFreq * 0.75,       t + 1.2);
-  droneOscs[1].osc.detune.linearRampToValueAtTime(detuneVals[0],            t + 1.2);
-  droneOscs[2].osc.detune.linearRampToValueAtTime(detuneVals[1],            t + 1.2);
-
-  // LFO más rápido con más satélites (órbitas más caóticas)
-  lfoNode.frequency.linearRampToValueAtTime(0.12 + frac * 0.6, t + 1.0);
-
-  // ── Crackle ────────────────────────────────────────────────────────────────
-  const crackleVol  = frac < 0.05 ? 0 : 0.02 + frac * 0.35;
-  const crackleFreq = 400 + frac * 4000;  // sube con la saturación del espectro
-  crackleGain.gain.linearRampToValueAtTime(crackleVol, t + 0.4);
-  crackleFilter.frequency.linearRampToValueAtTime(crackleFreq, t + 0.5);
-
-  // ── Evento de cambio de año ───────────────────────────────────────────────
-  if (yearData && prevYear !== null && yearData.year !== prevYear) {
-    const yearDiff = yearData.year - prevYear;
-    playYearEvent(yearDiff > 0, yearData.year);
-  }
-}
-
-function playYearEvent(goingForward, year) {
-  if (!audioCtx || !audioOn) return;
-  const t    = audioCtx.currentTime;
-  const gain = audioCtx.createGain();
-  const osc  = audioCtx.createOscillator();
-
-  osc.type = 'sine';
-  gain.connect(audioCtx.destination);
-  osc.connect(gain);
-
-  if (goingForward) {
-    // Lanzamiento: tono ascendente corto
-    osc.frequency.setValueAtTime(320, t);
-    osc.frequency.exponentialRampToValueAtTime(640, t + 0.12);
-    gain.gain.setValueAtTime(0.18, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-  } else {
-    // Re-entrada: tono descendente
-    osc.frequency.setValueAtTime(400, t);
-    osc.frequency.exponentialRampToValueAtTime(160, t + 0.18);
-    gain.gain.setValueAtTime(0.12, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-  }
-
-  osc.start(t);
-  osc.stop(t + 0.3);
-  osc.onended = () => { try { gain.disconnect(); } catch (_) {} };
-}
-
-function stopAudio() {
+// Ajusta el ruido sintético según la saturación del espectro (solo modo 'noise').
+function updateAmbientMix(total) {
   if (!audioCtx) return;
-  const t = audioCtx.currentTime;
-  droneGain  && droneGain.gain.linearRampToValueAtTime(0, t + 0.5);
-  crackleGain && crackleGain.gain.linearRampToValueAtTime(0, t + 0.3);
+  const t   = Math.min(1, total / MAX_TOTAL);
+  const now = audioCtx.currentTime;
+  if (soundMode === 'noise' && filterNode) {
+    const freq = 500 + t * (7500 - 500);
+    filterNode.frequency.linearRampToValueAtTime(freq, now + 0.3);
+    if (noiseGain && noiseGain.gain.value !== 0.25) noiseGain.gain.value = 0.25;
+  }
 }
 
-// ── Botón de audio ────────────────────────────────────────────────────────────
+function playOnceType(type, interval) {
+  if (soundMode !== 'beeps' || !satBuffer || !audioCtx || !audioOn) return;
+  const st   = soundState[type];
+  const spec = SOUND_TYPES[type];
+  if (st.gain) st.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0, audioCtx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.30, audioCtx.currentTime + 0.006);
+  gain.connect(audioCtx.destination);
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = satBuffer;
+  source.playbackRate.value = spec.pitch + Math.random() * spec.pitchVar;
+  source.connect(gain);
+  source.start();
+  source.onended = () => { try { gain.disconnect(); } catch (_) {} };
+
+  st.source = source;
+  st.gain   = gain;
+  st.timer  = setTimeout(() => playOnceType(type, interval), interval);
+}
+
+// Reinicia los beeps para el año actual; el ritmo de cada categoría sube con su
+// cantidad de satélites. Respeta las categorías activas de la leyenda (vizActive).
+function playSounds(d) {
+  if (soundMode !== 'beeps' || !satBuffer || !d) return;
+  stopSounds();
+  const GLOBAL_MAX = MAX_SL; // mayor cantidad de cualquier categoría (Starlink 2025)
+  Object.keys(SOUND_TYPES).forEach(type => {
+    const val = d[type] || 0;
+    if (!vizActive.has(type) || val <= 0) return;
+    const frac     = val / GLOBAL_MAX;
+    const interval = Math.round(SND_MAX_INTERVAL * Math.pow(SND_MIN_INTERVAL / SND_MAX_INTERVAL, frac));
+    soundState[type].timer = setTimeout(() => playOnceType(type, interval), 160);
+  });
+}
+
+function stopSoundType(type) {
+  const st = soundState[type];
+  clearTimeout(st.timer);
+  st.timer = null;
+  if (st.gain && audioCtx) st.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.012);
+  st.source = null;
+  st.gain   = null;
+}
+
+function stopSounds() {
+  Object.keys(SOUND_TYPES).forEach(stopSoundType);
+}
+
+// Llamada desde commit() en cada cambio de año confirmado.
+function updateSound(yearData) {
+  if (!audioOn || !yearData) return;
+  playSounds(yearData);
+  updateAmbientMix(vizEarthData(yearData).total);
+}
+
+// Apaga todo y resetea los botones secundarios.
+function stopAudio() {
+  stopSounds();
+  stopAmbient();
+  destroyNoise();
+  const amb  = document.getElementById('btn-ambient');
+  const mode = document.getElementById('btn-mode');
+  if (amb)  { amb.disabled  = true; amb.classList.remove('active'); }
+  if (mode) { mode.disabled = true; mode.classList.remove('active'); mode.textContent = '♪ Modo ruido'; }
+}
+
+function setSoundMode(mode) {
+  if (!audioCtx || !audioOn || soundMode === mode) return;
+  soundMode = mode;
+  const mb = document.getElementById('btn-mode');
+  if (soundMode === 'beeps') {
+    destroyNoise();
+    if (currentYearData) playSounds(currentYearData);
+    if (mb) { mb.textContent = '♪ Modo ruido'; mb.classList.remove('active'); }
+  } else {
+    stopSounds();
+    destroyNoise();
+    createNoise();
+    updateAmbientMix(currentYearData ? vizEarthData(currentYearData).total : 0);
+    if (mb) { mb.textContent = '♪ Modo pitidos'; mb.classList.add('active'); }
+  }
+}
+
+// ── Wiring de botones ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('btn-audio').addEventListener('click', () => {
-    const btn = document.getElementById('btn-audio');
+  const btnAudio   = document.getElementById('btn-audio');
+  const btnAmbient = document.getElementById('btn-ambient');
+  const btnMode    = document.getElementById('btn-mode');
+
+  btnAudio.addEventListener('click', () => {
     if (!audioOn) {
-      initAudio();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
       audioOn = true;
-      btn.textContent = '⏸ Desactivar sonido';
-      btn.classList.add('active');
-      lastAudioPct = -1; // forzar actualización en el próximo frame
+      btnAudio.textContent = '⏸ Desactivar sonido';
+      btnAudio.classList.add('active');
+      if (btnAmbient) { btnAmbient.disabled = false; btnAmbient.classList.toggle('active', ambientEnabled); }
+      if (btnMode)    { btnMode.disabled = false; btnMode.textContent = soundMode === 'noise' ? '♪ Modo pitidos' : '♪ Modo ruido'; btnMode.classList.toggle('active', soundMode === 'noise'); }
+
+      const start = () => {
+        if (!audioOn) return;
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        startAmbient();
+        if (currentYearData) updateSound(currentYearData);
+      };
+      if (_audioStarted && audioCtx && ambientBuffer) start();
+      else initAudio().then(start);
+
     } else {
       audioOn = false;
       stopAudio();
-      btn.textContent = '▶ Activar sonido';
-      btn.classList.remove('active');
+      btnAudio.textContent = '▶ Activar sonido';
+      btnAudio.classList.remove('active');
     }
+  });
+
+  if (btnAmbient) btnAmbient.addEventListener('click', () => {
+    if (!audioOn) return;
+    if (ambientEnabled) {
+      ambientEnabled = false;
+      stopAmbient();
+      btnAmbient.classList.remove('active');
+    } else {
+      ambientEnabled = true;
+      startAmbient();
+      btnAmbient.classList.add('active');
+    }
+  });
+
+  if (btnMode) btnMode.addEventListener('click', () => {
+    if (!audioOn) return;
+    setSoundMode(soundMode === 'noise' ? 'beeps' : 'noise');
   });
 
   initSetup();

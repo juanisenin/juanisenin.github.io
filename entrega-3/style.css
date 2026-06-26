@@ -5,17 +5,18 @@
 }
 
 :root {
-  --bg:       #0b0d14;
-  --surface:  #13161f;
-  --border:   #242838;
-  --text:     #e2e6f0;
+  --bg:       #f5f6fa;
+  --surface:  #ffffff;
+  --border:   #d5d9ea;
+  --text:     #3a3f5c;
   --muted:    #6b7394;
-  --accent:   #4f8ef7;
+  --accent:   #2171b5;
   --gov:      #2171b5;
   --gnss:     #2aaa58;
   --comm:     #9b59b6;
   --sl:       #e05c2a;
-  --danger:   #e05c2a;
+  --danger:   #c0392b;
+  --shadow:   0 2px 14px rgba(58, 63, 92, .08);
 }
 
 body {
@@ -45,17 +46,17 @@ body {
   font-size: 11px;
   letter-spacing: .07em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text);
   padding: 6px 18px;
-  border-radius: 6px 6px 0 0;
+  border-radius: 20px 20px 0 0;
   border: 1px solid transparent;
   border-bottom: none;
-  transition: background .15s, color .15s;
+  transition: background .15s, border-color .15s;
 }
 
 .nav-tab:hover {
-  background: var(--surface);
-  color: var(--text);
+  background: #e8eaf3;
+  border-color: var(--border);
 }
 
 .nav-tab.active {
@@ -91,6 +92,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 28px;
+  box-shadow: var(--shadow);
 }
 
 .setup-card h1 {
@@ -151,7 +153,7 @@ body {
 }
 
 select {
-  background: var(--bg);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
@@ -300,6 +302,7 @@ select:focus {
   flex-direction: column;
   gap: 24px;
   overflow-y: auto;
+  box-shadow: -2px 0 14px rgba(58, 63, 92, .06);
 }
 
 .calib-panel h2 {
@@ -361,13 +364,13 @@ select:focus {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  border: 2px solid rgba(255,255,255,.15);
+  border: 2px solid rgba(58,63,92,.18);
   cursor: pointer;
   transition: border-color .15s;
 }
 
 .color-swatch:hover {
-  border-color: rgba(255,255,255,.7);
+  border-color: rgba(58,63,92,.6);
 }
 
 .swatch-x {
@@ -415,11 +418,59 @@ select:focus {
   height: 100%;
 }
 
-.feed-wrap {
+/* ── Área de visualización (gráfico + globo + leyenda) ── */
+.viz-area {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px 28px;
+  overflow: auto;
+}
+
+.viz-title {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-align: center;
+}
+
+.viz-row {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  width: 100%;
+  max-width: 1040px;
+}
+
+#chart {
+  flex: 1;
+  min-width: 0;
+  overflow: visible;
+}
+
+#earth {
+  flex-shrink: 0;
+}
+
+/* ── Cámara reducida dentro del panel ── */
+.feed-wrap {
   position: relative;
   background: #000;
   overflow: hidden;
+}
+
+.feed-wrap.small {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .feed-wrap video {
@@ -437,6 +488,19 @@ select:focus {
   height: 100%;
 }
 
+.feed-tag {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  font-size: 10px;
+  letter-spacing: .04em;
+  color: #fff;
+  background: rgba(0,0,0,.55);
+  padding: 3px 8px;
+  border-radius: 12px;
+  pointer-events: none;
+}
+
 /* ── Panel info ── */
 .info-panel {
   width: 320px;
@@ -448,6 +512,7 @@ select:focus {
   flex-direction: column;
   gap: 28px;
   overflow-y: auto;
+  box-shadow: -2px 0 14px rgba(58, 63, 92, .06);
 }
 
 .info-top {
@@ -585,11 +650,20 @@ select:focus {
 }
 
 /* ── Audio & recalibrar ── */
-.audio-row {
+.audio-block {
   display: flex;
-  gap: 10px;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
   margin-top: auto;
+}
+
+.audio-sub {
+  display: flex;
+  gap: 8px;
+}
+
+.audio-sub > * {
+  flex: 1;
 }
 
 .btn-audio {
@@ -603,6 +677,16 @@ select:focus {
   letter-spacing: .04em;
   cursor: pointer;
   transition: border-color .15s, color .15s;
+}
+
+.btn-audio.sm {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.btn-audio:disabled {
+  opacity: .4;
+  cursor: default;
 }
 
 .btn-audio:hover {
@@ -624,5 +708,84 @@ select:focus {
 /* ── Starlink era highlight ── */
 .starlink-era #info-year {
   color: var(--sl);
+}
+
+/* ═══ Gráfico D3 embebido (estilo Entrega 2) ═══ */
+.axis text {
+  font-size: 12px;
+  fill: var(--text);
+}
+.axis path,
+.axis line {
+  stroke: var(--border);
+}
+.axis .domain {
+  display: none;
+}
+
+.grid line {
+  stroke: #b6bcd3;
+  stroke-dasharray: 3 3;
+}
+.grid path {
+  display: none;
+}
+
+.line {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.axis-label {
+  font-size: 13px;
+  fill: var(--text);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* Marcador del año actual (controlado por visión por computador) */
+.viz-cursor {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+.viz-cursor-dot {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+/* ── Leyenda ── */
+.viz-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  justify-content: center;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+  letter-spacing: .04em;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+.legend-item.inactive {
+  opacity: 0.30;
+}
+.legend-item:hover {
+  border-color: var(--border);
 }
 

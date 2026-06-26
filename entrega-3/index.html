@@ -82,14 +82,26 @@
   <div id="screen-main" class="screen">
     <div class="main-layout">
 
-      <!-- Feed de cámara con overlay -->
-      <div class="feed-wrap">
-        <video id="main-video" autoplay playsinline muted></video>
-        <canvas id="main-canvas"></canvas>
+      <!-- Área de visualización (Entrega 2), controlada por visión por computador -->
+      <div class="viz-area">
+        <h2 class="viz-title">Satélites en órbita · 1958–<span id="viz-year-inline">—</span></h2>
+        <div class="viz-row">
+          <svg id="chart"></svg>
+          <canvas id="earth"></canvas>
+        </div>
+        <div id="legend" class="viz-legend"></div>
       </div>
 
-      <!-- Panel de información -->
+      <!-- Panel lateral: cámara (reducida) + información -->
       <div class="info-panel">
+
+        <!-- Feed de cámara reducido con overlay -->
+        <div class="feed-wrap small">
+          <video id="main-video" autoplay playsinline muted></video>
+          <canvas id="main-canvas"></canvas>
+          <span class="feed-tag">Cámara · granos detectados</span>
+        </div>
+
         <div class="info-top">
           <div class="year-display">
             <span class="year-label">AÑO</span>
@@ -138,10 +150,16 @@
           </div>
         </div>
 
-        <div class="audio-row">
+        <div class="audio-block">
           <button id="btn-audio" class="btn-audio">▶ Activar sonido</button>
-          <button id="btn-recalib" class="btn-ghost small">Recalibrar</button>
-          <button id="btn-restart" class="btn-ghost small">← Inicio</button>
+          <div class="audio-sub">
+            <button id="btn-ambient" class="btn-audio sm" disabled>◎ Ambiente</button>
+            <button id="btn-mode" class="btn-audio sm" disabled>♪ Modo ruido</button>
+          </div>
+          <div class="audio-sub">
+            <button id="btn-recalib" class="btn-ghost small">Recalibrar</button>
+            <button id="btn-restart" class="btn-ghost small">← Inicio</button>
+          </div>
         </div>
 
         <p class="source-note">Fuente: CelesTrak SATCAT (abril 2025)</p>
@@ -150,6 +168,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
